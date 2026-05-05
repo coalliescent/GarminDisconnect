@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Device xmlns="http://www.garmin.com/xmlschemas/GarminDevice/v2">
+    <Model>
+        <PartNumber>006-B5023-00</PartNumber>
+        <SoftwareVersion>520</SoftwareVersion>
+        <Description>Instinct 3 Solar</Description>
+        <Serial>3835327190</Serial>
+    </Model>
+    <Id>3835327190</Id>
+    <DisplayName>Instinct 3</DisplayName>
+</Device>

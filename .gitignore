@@ -1,0 +1,26 @@
+# Build artifacts
+build/
+*.dSYM
+
+# macOS
+.DS_Store
+
+# Personal Garmin data (FIT files contain device serials + health telemetry)
+*.fit
+
+# Python (used by garmin-dump/)
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/

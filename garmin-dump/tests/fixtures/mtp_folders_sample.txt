@@ -1,0 +1,12 @@
+libmtp version: 1.1.23
+
+Folder list for storage Internal Storage
+Storage: 0x00020001
+16777216 Garmin
+16777230 Settings
+16777233 Activity
+16777242 Monitor
+16777248 Metrics
+16777250 Sleep
+16777255 HRVStatus
+OK.

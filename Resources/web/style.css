@@ -1,0 +1,758 @@
+/* GarminDisconnect — dark theme for the WKWebView host page.
+ *
+ * Single dark theme in v1. The app's NSWindow background is
+ * NSColor.windowBackgroundColor (dark on the typical macOS dark theme) and we
+ * match that here so there's no visible seam between the AppKit chrome and the
+ * WebView content.
+ */
+
+:root {
+    --bg:        #1e1e1e;
+    --bg-alt:    #252526;
+    --bg-card:   #2a2a2c;
+    --fg:        #dddddd;
+    --fg-dim:    #888888;
+    --fg-faint:  #555555;
+    --accent:    #4ec9b0;
+    --accent-2:  #569cd6;
+    --warn:      #d7ba7d;
+    --bad:       #f48771;
+    --gap:       #2a2a2a;  /* color for null cells in heatmaps */
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                 "Helvetica Neue", Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+}
+
+main#content {
+    height: 100vh;
+    overflow-y: auto;
+    padding: 20px 24px 60px;
+}
+
+/* ---- Tab visibility ---- */
+.tab {
+    display: none;
+}
+.tab.active {
+    display: block;
+}
+.hidden {
+    display: none !important;
+}
+
+/* ---- Chart grid layout ---- */
+.chart-grid {
+    display: grid;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+.chart-grid.one-col { grid-template-columns: 1fr; }
+.chart-grid.two-col { grid-template-columns: 1fr 1fr; }
+
+.chart-slot {
+    width: 100%;
+    /* Match the largest layout.height value used by any Plotly chart (380 for
+     * sleep-regularity-heatmap) plus 24px of padding. Smaller charts just
+     * occupy less of their slot — we accept the extra whitespace in exchange
+     * for never having Plotly's SVG escape its container.
+     *
+     * `position: relative` makes the slot the containing block for Plotly's
+     * absolutely-positioned modebar / hover layer. Without it those elements
+     * fall back to the nearest positioned ancestor (body) and visually float
+     * over neighbouring slots.
+     *
+     * `overflow: hidden` clips any residual overflow as a backstop.
+     */
+    min-height: 340px;
+    box-sizing: border-box;
+    position: relative;
+    overflow: hidden;
+    border-radius: 8px;
+    background: var(--bg-alt);
+    padding: 12px;
+}
+
+/* The HTML table slots size to their content, not to a fixed Plotly height. */
+.chart-slot.table-slot {
+    padding: 0;
+    min-height: 0;
+    overflow: visible;
+}
+
+/* The sleep regularity heatmap is taller than the rest. */
+.chart-slot.tall {
+    min-height: 420px;
+}
+
+/* Checkbox toggle row above the activity-metrics chart. Lives inside a
+ * .chart-grid alongside the chart-slot so it inherits the same gap/margin
+ * rhythm. Color swatches match the trace colors set in PlotlyEncoder.swift
+ * so the legend remains legible without showing Plotly's built-in legend.
+ */
+.metric-toggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    padding: 8px 12px 0;
+    font-size: 12px;
+    color: var(--fg-dim);
+}
+.metric-toggles label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    user-select: none;
+}
+.metric-toggles label .swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+}
+.metric-toggles input[type="checkbox"] {
+    margin: 0;
+    accent-color: var(--accent);
+}
+
+/* Pull the chart-slot tight against the toggle row above it. */
+.metric-toggles + .chart-slot {
+    margin-top: -4px;
+}
+
+/* Activity GPS map at the top of the activity-detail pane. Full-width and
+ * tall enough that the route doesn't get squashed into a sliver.
+ *
+ * `overflow: visible` overrides the base `.chart-slot` rule for this slot
+ * specifically, so the Plotly updatemenu button bars (Road/Satellite/Topo
+ * on the right, color-by on the left) aren't clipped during horizontal
+ * window resizes. They're rendered in the SVG's margin area, which can
+ * briefly exceed the slot's content box mid-resize before Plotly settles.
+ */
+.chart-slot.gps-slot {
+    min-height: 600px;
+    overflow: visible;
+}
+
+.section-heading {
+    margin: 8px 0 12px 4px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--fg-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+}
+
+/* ---- Insight cards (Overview) ---- */
+.insight-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 12px;
+    margin-bottom: 16px;
+}
+.insight-card {
+    background: var(--bg-alt);
+    border-radius: 8px;
+    padding: 14px 16px 12px;
+}
+.insight-card .card-title {
+    color: var(--fg-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.insight-card .card-value {
+    color: var(--fg);
+    font-size: 22px;
+    font-weight: 500;
+    margin-top: 6px;
+    line-height: 1.1;
+}
+.insight-card .card-sub {
+    color: var(--fg-dim);
+    font-size: 11px;
+    margin-top: 4px;
+}
+.insight-card .card-arrow {
+    display: inline-block;
+    margin-right: 4px;
+}
+.insight-card.up    .card-arrow { color: var(--accent); }
+.insight-card.down  .card-arrow { color: var(--bad); }
+.insight-card.flat  .card-arrow { color: var(--fg-faint); }
+.insight-card.positive  { border-left: 3px solid var(--accent); }
+.insight-card.negative  { border-left: 3px solid var(--bad); }
+
+/* ---- Activities tab sidebar layout ----
+ * Two-column grid: a fixed-width sidebar on the left holds the activity
+ * list and uses `position: sticky` to stay pinned while the page (main#content)
+ * scrolls. The right pane holds the weekly chart + selected-activity detail
+ * and grows naturally with its content.
+ *
+ * `position: sticky` on a flex/grid child works as long as the child has a
+ * defined height. We give the sidebar `max-height: calc(100vh - 100px)` so it
+ * fits the visible viewport, then `overflow-y: auto` so the inner list can
+ * scroll independently when the user has many activities.
+ */
+.tab.active.activities-layout {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 16px;
+    align-items: start;
+}
+.activities-sidebar {
+    position: sticky;
+    top: 0;
+    background: var(--bg-alt);
+    border-radius: 8px;
+    max-height: calc(100vh - 100px);
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+.activities-main {
+    min-width: 0;            /* let plotly charts shrink with the window */
+}
+.activities-sidebar .table-slot {
+    padding: 0;
+}
+
+/* ---- Activity list (compact card list, used in the Activities sidebar) ---- */
+.activity-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.activity-list-item {
+    padding: 10px 14px;
+    border-bottom: 1px solid #2f2f30;
+    cursor: pointer;
+    transition: background 0.05s ease;
+}
+.activity-list-item:hover {
+    background: rgba(78, 201, 176, 0.06);
+}
+.activity-list-item.selected {
+    background: rgba(78, 201, 176, 0.15);
+    border-left: 3px solid var(--accent);
+    padding-left: 11px;
+}
+.activity-list-item .ali-line1 {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+.activity-list-item .ali-sport {
+    color: var(--fg);
+    font-size: 13px;
+    font-weight: 500;
+    text-transform: capitalize;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.activity-list-item .ali-date {
+    color: var(--fg-dim);
+    font-size: 11px;
+    flex-shrink: 0;
+}
+.activity-list-item .ali-line2 {
+    color: var(--fg-dim);
+    font-size: 11px;
+    margin-top: 4px;
+}
+
+/* ---- Sync panel ---- */
+.sync-panel {
+    padding: 8px 4px;
+}
+.sync-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--bg-alt);
+    border-radius: 8px;
+    padding: 18px 22px;
+    margin-bottom: 24px;
+}
+.sync-status-title {
+    font-size: 16px;
+    color: var(--fg);
+    margin-bottom: 4px;
+}
+.sync-status-sub {
+    font-size: 11px;
+    color: var(--fg-dim);
+}
+.sync-now-btn {
+    background: var(--accent);
+    color: #1a1a1a;
+    border: none;
+    border-radius: 6px;
+    padding: 10px 18px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.sync-now-btn:hover { filter: brightness(1.08); }
+.sync-now-btn:disabled { opacity: 0.55; cursor: progress; }
+
+.sync-runs-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+.sync-runs-table th,
+.sync-runs-table td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #333;
+    text-align: left;
+}
+.sync-runs-table th {
+    color: var(--fg-dim);
+    font-weight: 500;
+    text-transform: uppercase;
+    font-size: 10px;
+    letter-spacing: 0.5px;
+}
+.sync-runs-table td {
+    color: var(--fg);
+}
+.sync-runs-table td.right { text-align: right; }
+.sync-runs-table tr.failed td { color: var(--bad); }
+
+/* ---- Empty-state placeholder ---- */
+.empty-message {
+    color: var(--fg-dim);
+    text-align: center;
+    padding: 60px 20px;
+    font-size: 14px;
+}
+
+/* ---- Chart card (wraps slot + interval picker) ---- */
+.chart-card {
+    display: flex;
+    flex-direction: column;
+}
+.chart-card .chart-slot {
+    /* Slot inside a card no longer needs its own outer margin since the
+     * controls bar above provides spacing. */
+    margin-top: 0;
+}
+
+/* ---- Chart interval picker (◀ Day | Week | Month | Year ▶) ---- */
+.chart-window-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    padding: 0 4px;
+    font-size: 11px;
+    color: var(--fg-dim);
+}
+.window-arrow {
+    background: transparent;
+    border: 1px solid #3a3a3c;
+    color: var(--fg-dim);
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 0;
+    font-size: 11px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.window-arrow:hover:not(:disabled) {
+    background: rgba(78, 201, 176, 0.1);
+    color: var(--fg);
+    border-color: #4ec9b0;
+}
+.window-arrow:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+.window-tabs {
+    display: inline-flex;
+    background: var(--bg-card);
+    border-radius: 4px;
+    padding: 1px;
+    gap: 1px;
+}
+.window-tab {
+    background: transparent;
+    border: none;
+    color: var(--fg-dim);
+    padding: 3px 10px;
+    font-size: 11px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.window-tab:hover {
+    color: var(--fg);
+}
+.window-tab.active {
+    background: var(--accent);
+    color: #1a1a1a;
+    font-weight: 600;
+}
+.window-label {
+    color: var(--fg-dim);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---- Plotly tweaks (modebar hidden via config but just in case) ---- */
+.modebar { display: none !important; }
+
+/* ---- Dark scrollbars ----
+ * WKWebView on macOS defaults to the system scrollbar style, which renders
+ * as a bright white-ish strip on top of our dark background. Override with
+ * `::-webkit-scrollbar` selectors so the scroll thumbs blend with the dark
+ * theme. Applied globally so every scroll surface (the main tab pane, the
+ * activities sidebar, table overflow regions) gets the same treatment.
+ */
+::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+    background: transparent;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: #3a3a3c;
+    border-radius: 6px;
+    /* Inset border creates a transparent gap around the thumb so it doesn't
+     * fill the whole gutter — gives the same "floating bar" look as the
+     * native macOS overlay scrollbar. */
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    min-height: 30px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #555557;
+    background-clip: padding-box;
+    border: 3px solid transparent;
+}
+::-webkit-scrollbar-thumb:active {
+    background: #6e6e70;
+    background-clip: padding-box;
+    border: 3px solid transparent;
+}
+::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+/* ---- GPS map hover legend ----
+ * Floating overlay in the bottom-left corner of the activity GPS map. Plotly
+ * fires `plotly_hover` events from the plain trace (which has hoverinfo:none
+ * to suppress the default tooltip) and the JS handler in charts.js writes
+ * the per-point text into this element. `pointer-events: none` so it never
+ * intercepts hover events from the chart underneath. The overlay is hidden
+ * by default (via `.hidden`) and only appears while the cursor is actually
+ * hovering a point — `plotly_unhover` puts it back to hidden.
+ */
+.gps-hover-legend {
+    position: absolute;
+    left: 14px;
+    bottom: 14px;
+    background: rgba(30, 30, 30, 0.88);
+    border: 1px solid var(--fg-faint);
+    border-radius: 4px;
+    padding: 6px 10px;
+    color: var(--fg);
+    font-size: 11px;
+    line-height: 1.55;
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+    z-index: 10;
+    max-width: 240px;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+/* Faint divider between the physical-properties group and the body-metrics
+ * group inside the hover legend (see PlotlyEncoder.gpsHoverText). */
+.gps-hover-legend hr {
+    border: 0;
+    border-top: 1px solid var(--fg-faint);
+    margin: 5px 0 4px;
+    opacity: 0.7;
+}
+
+/* ---- GPS map scale bar ----
+ * Positioned bottom-right of the GPS chart slot, opposite the hover legend.
+ * Renders a classic cartographic scale bar: a horizontal line with short
+ * vertical ticks at each end, and a distance label to the right.
+ */
+.gps-scale-bar {
+    position: absolute;
+    right: 14px;
+    bottom: 16px;
+    pointer-events: none;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.gps-scale-line {
+    /* U-shaped: two vertical ticks connected by a horizontal baseline. */
+    border-bottom: 2px solid var(--fg);
+    border-left: 2px solid var(--fg);
+    border-right: 2px solid var(--fg);
+    height: 5px;
+    min-width: 20px;
+    opacity: 0.85;
+}
+.gps-scale-label {
+    color: var(--fg);
+    font-size: 10px;
+    opacity: 0.85;
+    text-shadow:
+        0 0 4px rgba(0, 0, 0, 0.9),
+        0 0 2px rgba(0, 0, 0, 0.7);
+    white-space: nowrap;
+}
+
+/* ---- Plotly updatemenu button styling override ----
+ * Plotly mutates the button rect fill via inline style on mouseenter,
+ * leaving stale inline fills behind on hover-out — without an explicit
+ * default rule, washed-out leftover colors can stick around. So we
+ * pin every state with `!important` rules:
+ *
+ *   default → dark bg,           light text  (clean, neutral)
+ *   hover   → low-sat dark teal, light text  (subtle hint)
+ *   active  → vivid accent bg,   dark text   (high contrast pop)
+ *
+ * Plotly's button DOM is a `g.updatemenu-button` containing a
+ * `rect.updatemenu-item-rect` and a `text.updatemenu-item-text`.
+ *
+ * The active (selected) state has NO class added by Plotly — it's
+ * conveyed only via inline rect fill, leaving CSS no hook to style
+ * the matching text. So charts.js walks the full layout after each
+ * render and tags the active `g.updatemenu-button` with
+ * `.gpd-active-button`; the rules below pick that up.
+ *
+ * Cascade order is critical:
+ *   1. default       — base reset
+ *   2. hover         — subtle, lower visual weight than active
+ *   3. active        — comes LAST so it wins over hover too (the active
+ *                      button stays vivid even when the cursor is on it,
+ *                      which feels more correct than hover bumping it
+ *                      down to the low-sat state)
+ * Hover's `:hover` pseudo-class adds specificity, so to make active win
+ * we use a more specific selector for active: `g.updatemenu-button.gpd-
+ * active-button` adds an extra class to bump it past hover's pseudo.
+ */
+g.updatemenu-button rect.updatemenu-item-rect {
+    fill: #1e1e1e !important;
+}
+g.updatemenu-button text.updatemenu-item-text {
+    fill: var(--fg) !important;
+}
+g.updatemenu-button:hover rect.updatemenu-item-rect {
+    fill: #2a3a37 !important;
+}
+g.updatemenu-button:hover text.updatemenu-item-text {
+    fill: var(--fg) !important;
+}
+g.updatemenu-button.gpd-active-button rect.updatemenu-item-rect {
+    fill: var(--accent) !important;
+}
+g.updatemenu-button.gpd-active-button text.updatemenu-item-text {
+    fill: #1a1a1a !important;
+}
+
+/* ===== Activity trim controls =====
+ *
+ * Real-time-scaled timeline strip below the GPS map. Segments (continuous
+ * record runs) render as dark bars; pauses render as gaps between them. Each
+ * segment carries two draggable handles — handles can only move INWARD, so
+ * pause boundaries are immutable. A reset button lives next to the timeline
+ * and a note line below shows auto-trim provenance ("Auto-trimmed because…").
+ *
+ * Layout: the timeline is itself a flex row, with each segment block sized by
+ * flex-grow proportional to its elapsed-second span. Pause gaps get their own
+ * flex-grow blocks at proportional widths, so real time is preserved without
+ * any manual scaling math.
+ */
+.trim-slot {
+    width: 100%;
+    background: var(--bg-card);
+    border-radius: 4px;
+    padding: 14px 16px 12px;
+    color: var(--fg);
+}
+.trim-slot.empty {
+    color: var(--fg-dim);
+    font-size: 12px;
+    text-align: center;
+    padding: 12px;
+}
+
+.trim-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: var(--fg-dim);
+}
+.trim-header .trim-title {
+    color: var(--fg);
+    font-weight: 500;
+}
+.trim-reset {
+    background: transparent;
+    border: 1px solid var(--fg-faint);
+    color: var(--fg-dim);
+    border-radius: 3px;
+    font-size: 11px;
+    padding: 3px 10px;
+    cursor: pointer;
+    font-family: inherit;
+}
+.trim-reset:hover {
+    background: var(--bg-alt);
+    color: var(--fg);
+    border-color: var(--fg-dim);
+}
+.trim-reset:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.trim-timeline {
+    position: relative;
+    display: flex;
+    height: 36px;
+    width: 100%;
+    user-select: none;
+    -webkit-user-select: none;
+    margin-top: 2px;
+}
+
+/* A single continuous-recording segment. */
+.trim-segment {
+    position: relative;
+    background: #3a3a3c;
+    border-radius: 2px;
+    height: 100%;
+    /* flex-grow set inline per segment (proportional to elapsed time). */
+}
+/* The "kept" sub-region between the two handles, drawn in accent color so
+ * the user sees what's included at a glance. */
+.trim-segment .trim-keep {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: var(--accent);
+    opacity: 0.55;
+    pointer-events: none;
+    border-radius: 2px;
+}
+.trim-segment.collapsed {
+    opacity: 0.35;
+}
+.trim-segment.collapsed .trim-keep {
+    display: none;
+}
+
+/* The pause gap rendered as an empty wedge between segments, with a faint
+ * "T" marker centered to mirror the map pause badges. */
+.trim-gap {
+    position: relative;
+    background: transparent;
+    height: 100%;
+    flex-shrink: 0;
+    /* flex-grow set inline per gap. */
+}
+.trim-gap::before {
+    content: "T";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: var(--fg-faint);
+    font-size: 10px;
+    font-family: ui-monospace, Menlo, monospace;
+}
+
+/* Draggable handles. Each segment has two: data-edge="start" (left, drags
+ * right) and data-edge="end" (right, drags left). The handle hit area is
+ * intentionally larger than the visible bar so it's easy to grab. */
+.trim-handle {
+    position: absolute;
+    top: -4px;
+    bottom: -4px;
+    width: 14px;
+    margin-left: -7px;
+    cursor: ew-resize;
+    z-index: 3;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.trim-handle::before {
+    content: "";
+    width: 4px;
+    height: 100%;
+    background: var(--fg);
+    border-radius: 2px;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+.trim-handle:hover::before,
+.trim-handle.dragging::before {
+    background: var(--accent);
+}
+
+/* Tooltip shown while a handle is being dragged. */
+.trim-tooltip {
+    position: absolute;
+    background: rgba(0, 0, 0, 0.85);
+    color: var(--fg);
+    border: 1px solid var(--fg-faint);
+    border-radius: 3px;
+    padding: 4px 7px;
+    font-size: 11px;
+    font-family: ui-monospace, Menlo, monospace;
+    line-height: 1.35;
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 5;
+    transform: translate(-50%, -100%);
+    margin-top: -10px;
+}
+.trim-tooltip.hidden {
+    display: none;
+}
+.trim-tooltip-clock {
+    color: var(--fg-dim);
+    font-size: 10px;
+}
+
+.trim-note {
+    margin-top: 10px;
+    font-size: 11px;
+    color: var(--warn);
+    font-style: italic;
+}
+.trim-note.hidden {
+    display: none;
+}

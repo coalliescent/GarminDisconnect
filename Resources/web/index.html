@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>GarminDisconnect</title>
+    <!--
+        Single-page WKWebView host. Each top-level tab is a `<section>` block;
+        bootstrap.js's window.GarminDisconnect.showTab(id) toggles which one is
+        visible. Slot ids correspond 1:1 with chart-id strings in PlotlyEncoder.
+    -->
+    <link rel="stylesheet" href="style.css">
+    <script src="vendor/plotly-2.35.2.min.js"></script>
+</head>
+<body>
+    <main id="content">
+
+        <!-- ============== OVERVIEW ============== -->
+        <section id="tab-overview" class="tab active">
+            <div id="overview-insights" class="insight-grid"></div>
+
+            <div class="chart-grid two-col">
+                <div id="chart-daily-steps-bar" class="chart-slot"></div>
+                <div id="chart-resting-hr-trendline" class="chart-slot"></div>
+            </div>
+
+            <div class="chart-grid two-col">
+                <div id="chart-body-battery-gauge" class="chart-slot"></div>
+                <div id="chart-recent-activities-timeline" class="chart-slot"></div>
+            </div>
+
+            <div class="chart-grid one-col">
+                <div id="chart-weekly-distance-bar" class="chart-slot"></div>
+            </div>
+        </section>
+
+        <!-- ============== ACTIVITIES ============== -->
+        <!--
+            Sidebar layout: the activity list pins to the left so it's always
+            visible while the user scrolls the right pane. The right pane
+            shows the selected activity's detail charts. (The weekly-distance
+            summary lives on the Overview tab now.)
+        -->
+        <section id="tab-activities" class="tab activities-layout">
+            <aside id="activities-sidebar" class="activities-sidebar">
+                <div id="chart-activity-list" class="table-slot"></div>
+            </aside>
+            <div id="activities-main" class="activities-main">
+                <div id="activity-detail-section" class="hidden">
+                    <h2 class="section-heading">Selected activity</h2>
+                    <div class="chart-grid one-col">
+                        <div id="chart-activity-gps-map" class="chart-slot gps-slot"></div>
+                    </div>
+                    <div class="chart-grid one-col">
+                        <div id="chart-activity-trim-controls" class="trim-slot"></div>
+                    </div>
+                    <div class="chart-grid one-col">
+                        <div class="metric-toggles" id="activity-metric-toggles">
+                            <label><span class="swatch" style="background:#4ec9b0"></span><input type="checkbox" data-trace="0" data-axis="yaxis" checked> Pace</label>
+                            <label><span class="swatch" style="background:#569cd6"></span><input type="checkbox" data-trace="1" data-axis="yaxis2" checked> Altitude</label>
+                            <label><span class="swatch" style="background:#b5cea8"></span><input type="checkbox" data-trace="2" data-axis="yaxis3"> Speed</label>
+                            <label><span class="swatch" style="background:#f48771"></span><input type="checkbox" data-trace="3" data-axis="yaxis4"> Heart rate</label>
+                        </div>
+                        <div id="chart-activity-pace-altitude" class="chart-slot"></div>
+                    </div>
+                    <div class="chart-grid one-col">
+                        <div id="chart-activity-hr-zones" class="chart-slot"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ============== WELLNESS ============== -->
+        <section id="tab-wellness" class="tab">
+            <div class="chart-grid one-col">
+                <div id="chart-stress-body-battery-ts" class="chart-slot"></div>
+            </div>
+            <div class="chart-grid two-col">
+                <div id="chart-daily-intensity-minutes-bar" class="chart-slot"></div>
+                <div id="chart-steps-hourly-heatmap" class="chart-slot"></div>
+            </div>
+        </section>
+
+        <!-- ============== SLEEP ============== -->
+        <section id="tab-sleep" class="tab">
+            <div class="chart-grid one-col">
+                <div id="chart-sleep-hypnogram" class="chart-slot"></div>
+            </div>
+            <div class="chart-grid one-col">
+                <div id="chart-sleep-regularity-heatmap" class="chart-slot tall"></div>
+            </div>
+        </section>
+
+        <!-- ============== SYNC ============== -->
+        <section id="tab-sync" class="tab">
+            <div id="sync-panel" class="sync-panel">
+                <div class="sync-status-row">
+                    <div class="sync-status">
+                        <div class="sync-status-title" id="sync-last-summary">Last sync: never</div>
+                        <div class="sync-status-sub"  id="sync-device-info"></div>
+                    </div>
+                    <button id="sync-now-btn" class="sync-now-btn">Pull now</button>
+                </div>
+                <h2 class="section-heading">Recent runs</h2>
+                <div id="chart-sync-runs" class="chart-slot table-slot"></div>
+            </div>
+        </section>
+
+    </main>
+    <script src="charts.js"></script>
+    <script src="bootstrap.js"></script>
+</body>
+</html>

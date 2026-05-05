@@ -1,0 +1,61 @@
+Device 0 (VID=091e and PID=51e9) is UNKNOWN in libmtp v1.1.23.
+Please report this VID/PID and the device model to the libmtp development team
+libmtp version: 1.1.23
+
+Listing raw device(s)
+   Found 1 device(s):
+   091e:51e9 @ bus 5, dev 1
+Attempting to connect device(s)
+USB low-level info:
+   Interface has a kernel driver attached.
+   bcdUSB: 512
+   bDeviceClass: 0
+   bDeviceSubClass: 0
+   bDeviceProtocol: 0
+   idVendor: 091e
+   idProduct: 51e9
+   IN endpoint maxpacket: 512 bytes
+   OUT endpoint maxpacket: 512 bytes
+   Raw device info:
+      Bus location: 5
+      Device number: 1
+      Device entry info:
+         Vendor: (null)
+         Vendor id: 0x091e
+         Product: (null)
+         Product id: 0x51e9
+         Device flags: 0x00000000
+Configuration 0, interface 0, altsetting 0:
+   Interface description contains the string "MTP"
+   Device recognized as MTP, no further probing.
+Device info:
+   Manufacturer: Garmin
+   Model: Instinct 3 - 45mm
+   Device version: 521
+   Serial number: 0000d1281fa5
+   Vendor extension ID: 0x00000006
+   Vendor extension description: microsoft.com: 1.0;
+   Detected object size: 64 bits
+   Extensions:
+        microsoft.com: 1.0
+Supported operations:
+   1003: Close session
+   100b: Delete object
+   1001: Get device info
+   1014: Get device property description
+   1015: Get device property value
+   1009: Get object
+   1007: Get object handles
+   1008: Get object info
+   9802: Get object property description
+   9805: Get object property list
+   9803: Get object property value
+   9801: Get object properties supported
+   101b: Get partial object
+   1004: Get storage IDs
+   1005: Get storage info
+   1019: Move object
+   1002: Open session
+   1010: Reset device
+   100d: Send object
+OK.

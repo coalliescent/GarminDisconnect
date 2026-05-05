@@ -1,0 +1,59 @@
+libmtp version: 1.1.23
+
+mtp-files: Successfully connected
+Listing File Information on Device with name: Instinct 3 - 45mm [SN:0000d1281fa5]
+File ID: 16777400
+   Filename: 2025-04-13-11-43-30.fit
+   File size 81920 (0x0000000000014000) bytes
+   Parent ID: 16777233
+   Storage ID: 0x00020001
+   Filetype: Undefined filetype
+File ID: 16777401
+   Filename: 2025-04-14-08-21-15.fit
+   File size 65536 (0x0000000000010000) bytes
+   Parent ID: 16777233
+   Storage ID: 0x00020001
+   Filetype: Undefined filetype
+File ID: 16777500
+   Filename: M24A3800.FIT
+   File size 32768 (0x0000000000008000) bytes
+   Parent ID: 16777242
+   Storage ID: 0x00020001
+   Filetype: Undefined filetype
+File ID: 16777600
+   Filename: F4D90308.fit
+   File size 800 (0x0000000000000320) bytes
+   Parent ID: 16777250
+   Storage ID: 0x00020001
+   Filetype: Undefined filetype
+File ID: 16777700
+   Filename: G3D00206.fit
+   File size 512 (0x0000000000000200) bytes
+   Parent ID: 16777248
+   Storage ID: 0x00020001
+   Filetype: Undefined filetype
+File ID: 16777800
+   Filename: G1FJ5424.fit
+   File size 1024 (0x0000000000000400) bytes
+   Parent ID: 16777255
+   Storage ID: 0x00020001
+   Filetype: Undefined filetype
+File ID: 16777900
+   Filename: Settings.fit
+   File size 11723 (0x0000000000002DCB) bytes
+   Parent ID: 16777230
+   Storage ID: 0x00020001
+   Filetype: Undefined filetype
+File ID: 16778000
+   Filename: gmaptz.img
+   File size 572416 (0x000000000008BC00) bytes
+   Parent ID: 16777216
+   Storage ID: 0x00020001
+   Filetype: Undefined filetype
+File ID: 16778100
+   Filename: GarminDevice.xml
+   File size 4096 (0x0000000000001000) bytes
+   Parent ID: 0
+   Storage ID: 0x00020001
+   Filetype: ISO9660 compliant CDROM image (XML)
+OK.
