@@ -44,10 +44,13 @@
     // These are exposed via the same dispatch mechanism as the Plotly
     // renderers in charts.js so Swift only has to know about one entry point.
 
-    /// Render the insight-cards strip on the Overview tab.
-    /// Payload: { chart: "insight-cards", insights: [{ title, value, sub, direction, severity }, ...] }
+    /// Render the insight-cards strip into the container named in the payload
+    /// (overview-insights, wellness-insights, or sleep-insights). Falls back
+    /// to overview-insights for older payloads that didn't carry a container.
+    /// Payload: { chart: "insight-cards", container: "...-insights", insights: [...] }
     function renderInsightCards(payload) {
-        const grid = document.getElementById('overview-insights');
+        const containerId = payload.container || 'overview-insights';
+        const grid = document.getElementById(containerId);
         if (!grid) return;
         grid.innerHTML = '';
         const insights = payload.insights || [];
@@ -73,9 +76,68 @@
         }
     }
 
+    /// Render the activity summary card — a horizontal stat band shown
+    /// above the per-activity detail charts. Two-column layout: title +
+    /// subtitle on the left, a flowing grid of labeled stats on the right.
+    /// Payload: { chart: "activity-summary-card", title, subtitle,
+    ///            rows: [{label, value}, ...] }
+    function renderActivitySummaryCard(payload) {
+        const slot = document.getElementById('chart-activity-summary-card');
+        if (!slot) return;
+        const rows = payload.rows || [];
+        if (rows.length === 0) {
+            slot.innerHTML = '<div class="empty-message">' +
+                escapeHtml(payload.message || 'No activity data.') +
+                '</div>';
+            return;
+        }
+        let html = '<div class="summary-head">'
+                 + '<div class="summary-head-title">' + escapeHtml(payload.title || '') + '</div>'
+                 + '<div class="summary-head-sub">' + escapeHtml(payload.subtitle || '') + '</div>'
+                 + '</div>';
+        html += '<div class="summary-stats">';
+        for (const r of rows) {
+            html += '<div class="stat-cell">'
+                  +     '<div class="stat-label">' + escapeHtml(r.label) + '</div>'
+                  +     '<div class="stat-value">' + escapeHtml(String(r.value)) + '</div>'
+                  + '</div>';
+        }
+        html += '</div>';
+        slot.innerHTML = html;
+        // Reveal the parent detail section if it was hidden — the summary
+        // card is the first chunk loaded for a newly selected activity, so
+        // make sure the section is visible by the time the GPS map paints.
+        const det = document.getElementById('activity-detail-section');
+        if (det) det.classList.remove('hidden');
+    }
+
+    /// Render the sleep summary card — a labels/values list inside the
+    /// sleep-hero flex row. Same dispatch entry point as the Plotly charts so
+    /// Swift only has to know one render call.
+    /// Payload: { chart: "sleep-summary-card", title: "...", rows: [{label, value}, ...] }
+    function renderSleepSummaryCard(payload) {
+        const slot = document.getElementById('chart-sleep-summary-card');
+        if (!slot) return;
+        const rows = payload.rows || [];
+        if (rows.length === 0) {
+            slot.innerHTML = '<div class="empty-message">' +
+                escapeHtml(payload.message || 'No sleep data yet.') +
+                '</div>';
+            return;
+        }
+        let html = '<div class="summary-title">' + escapeHtml(payload.title || 'Last night') + '</div>';
+        html += '<div class="summary-rows">';
+        for (const r of rows) {
+            html += '<div class="summary-label">' + escapeHtml(r.label) + '</div>'
+                  + '<div class="summary-value">' + escapeHtml(String(r.value)) + '</div>';
+        }
+        html += '</div>';
+        slot.innerHTML = html;
+    }
+
     /// Render the activity-list as a compact vertical list of cards. The
     /// Activities tab uses a sidebar layout, so we need a narrow renderer.
-    /// Payload: { chart: "activity-list", rows: [{activity_id, start, sport, distance, duration, avg_hr, training_load}, ...] }
+    /// Payload: { chart: "activity-list", rows: [{activity_id, start, sport, distance, duration, avg_hr, training_load}, ...], selected_activity_id?: int }
     function renderActivityList(payload) {
         const slot = document.getElementById('chart-activity-list');
         if (!slot) return;
@@ -84,6 +146,9 @@
             slot.innerHTML = '<div class="empty-message">No activities yet.</div>';
             return;
         }
+        const selectedId = (payload.selected_activity_id != null)
+            ? Number(payload.selected_activity_id)
+            : null;
         let html = '<ul class="activity-list">';
         for (const r of rows) {
             const sport = escapeHtml(r.sport || 'activity');
@@ -92,7 +157,9 @@
             const dur = r.duration && r.duration !== '—' ? escapeHtml(r.duration) : '';
             const hr = r.avg_hr && r.avg_hr !== '—' ? escapeHtml(r.avg_hr) : '';
             const meta = [dist, dur, hr].filter(Boolean).join(' • ');
-            html += '<li class="activity-list-item" data-activity-id="' + r.activity_id + '">'
+            const isSelected = selectedId != null && Number(r.activity_id) === selectedId;
+            html += '<li class="activity-list-item' + (isSelected ? ' selected' : '') + '"'
+                +     ' data-activity-id="' + r.activity_id + '">'
                 + '<div class="ali-line1">'
                 +     '<span class="ali-sport">' + sport + '</span>'
                 +     '<span class="ali-date">' + start + '</span>'
@@ -102,6 +169,16 @@
         }
         html += '</ul>';
         slot.innerHTML = html;
+
+        // Scroll the auto-selected row into view so the user lands looking
+        // at the selection rather than hunting for it. `nearest` keeps the
+        // sidebar's scroll position calm if the row is already visible.
+        if (selectedId != null) {
+            const sel = slot.querySelector('.activity-list-item.selected');
+            if (sel && typeof sel.scrollIntoView === 'function') {
+                sel.scrollIntoView({block: 'nearest'});
+            }
+        }
 
         // Wire up row click → post message to Swift.
         slot.querySelectorAll('.activity-list-item').forEach(function (li) {
@@ -207,6 +284,8 @@
         if (chartId === 'activity-list') return renderActivityList(payload);
         if (chartId === 'sync-runs')      return renderSyncRuns(payload);
         if (chartId === 'sync-summary')   return renderSyncSummary(payload);
+        if (chartId === 'sleep-summary-card') return renderSleepSummaryCard(payload);
+        if (chartId === 'activity-summary-card') return renderActivitySummaryCard(payload);
 
         // Plotly renderers.
         const renderers = window.GarminDisconnect.renderers || {};

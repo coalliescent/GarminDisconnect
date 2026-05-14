@@ -238,6 +238,100 @@ public enum Queries {
           AND timestamp_utc <= ?
         """
 
+    /// Per-night HRV value from `hrv_value_ms` samples (Garmin's nightly HRV
+    /// summary, FIT mesg_num 371). One row per session — collapsed to the
+    /// median value within each local day so a single nightly point is
+    /// emitted regardless of how many micro-samples the watch wrote.
+    /// Bind: device_id.
+    public static let wellnessHRVDaily = """
+        SELECT date(timestamp_utc, 'localtime') AS date_local,
+               AVG(value) AS hrv_ms
+        FROM wellness_samples
+        WHERE device_id = ?
+          AND metric = 'hrv_value_ms'
+          AND value IS NOT NULL
+        GROUP BY date_local
+        ORDER BY date_local
+        """
+
+    /// Per-night HRV within an explicit window. Bind: device_id, start, end.
+    public static let wellnessHRVDailyWindowed = """
+        SELECT date(timestamp_utc, 'localtime') AS date_local,
+               AVG(value) AS hrv_ms
+        FROM wellness_samples
+        WHERE device_id = ?
+          AND metric = 'hrv_value_ms'
+          AND value IS NOT NULL
+          AND timestamp_utc >= ?
+          AND timestamp_utc <= ?
+        GROUP BY date_local
+        ORDER BY date_local
+        """
+
+    /// Daily HR range — resting_hr (overnight low), min_hr, max_hr — pulled
+    /// from `wellness_daily` for the band chart. Bind: device_id.
+    public static let wellnessHRRangeDaily = """
+        SELECT date_local, resting_hr, min_hr, max_hr
+        FROM wellness_daily
+        WHERE device_id = ?
+          AND (min_hr IS NOT NULL OR max_hr IS NOT NULL)
+        ORDER BY date_local
+        """
+
+    /// Daily HR range within an explicit window. Bind: device_id, start, end.
+    public static let wellnessHRRangeDailyWindowed = """
+        SELECT date_local, resting_hr, min_hr, max_hr
+        FROM wellness_daily
+        WHERE device_id = ?
+          AND (min_hr IS NOT NULL OR max_hr IS NOT NULL)
+          AND date_local >= ?
+          AND date_local <= ?
+        ORDER BY date_local
+        """
+
+    /// Daily steps + distance for the steps/distance combo chart. Distance
+    /// in meters, the encoder converts to km. Bind: device_id.
+    public static let wellnessStepsDistanceDaily = """
+        SELECT date_local, steps, distance_m
+        FROM wellness_daily
+        WHERE device_id = ?
+          AND (steps IS NOT NULL OR distance_m IS NOT NULL)
+        ORDER BY date_local
+        """
+
+    /// Daily steps + distance within an explicit window.
+    /// Bind: device_id, start, end.
+    public static let wellnessStepsDistanceDailyWindowed = """
+        SELECT date_local, steps, distance_m
+        FROM wellness_daily
+        WHERE device_id = ?
+          AND (steps IS NOT NULL OR distance_m IS NOT NULL)
+          AND date_local >= ?
+          AND date_local <= ?
+        ORDER BY date_local
+        """
+
+    /// Daily respiration + SpO2 averages. Bind: device_id.
+    public static let wellnessRespirationSpo2Daily = """
+        SELECT date_local, respiration_avg, spo2_avg
+        FROM wellness_daily
+        WHERE device_id = ?
+          AND (respiration_avg IS NOT NULL OR spo2_avg IS NOT NULL)
+        ORDER BY date_local
+        """
+
+    /// Daily respiration + SpO2 within an explicit window.
+    /// Bind: device_id, start, end.
+    public static let wellnessRespirationSpo2DailyWindowed = """
+        SELECT date_local, respiration_avg, spo2_avg
+        FROM wellness_daily
+        WHERE device_id = ?
+          AND (respiration_avg IS NOT NULL OR spo2_avg IS NOT NULL)
+          AND date_local >= ?
+          AND date_local <= ?
+        ORDER BY date_local
+        """
+
     // MARK: - Sleep tab
 
     /// Most recent sleep session for the hypnogram. Bind: device_id.
@@ -261,7 +355,7 @@ public enum Queries {
     /// Sleep sessions in the trailing 60 days for the regularity heatmap.
     /// Bind: device_id.
     public static let sleepSessions60d = """
-        SELECT start_utc, end_utc, sleep_score, local_offset_s
+        SELECT sleep_id, start_utc, end_utc, sleep_score, local_offset_s
         FROM sleep_sessions
         WHERE device_id = ?
           AND start_utc >= datetime('now', '-60 days')
@@ -271,12 +365,49 @@ public enum Queries {
     /// Sleep sessions within an explicit window.
     /// Bind: device_id, start_iso, end_iso.
     public static let sleepSessionsWindowed = """
-        SELECT start_utc, end_utc, sleep_score, local_offset_s
+        SELECT sleep_id, start_utc, end_utc, sleep_score, local_offset_s
         FROM sleep_sessions
         WHERE device_id = ?
           AND start_utc >= ?
           AND start_utc <= ?
         ORDER BY start_utc
+        """
+
+    /// Full per-session detail across a window — used by the score trend,
+    /// stage stacked bar, duration bar, and bed/wake scatter encoders.
+    /// Bind: device_id, start_iso, end_iso.
+    public static let sleepNightsWindowed = """
+        SELECT sleep_id, start_utc, end_utc, duration_s, sleep_score,
+               deep_s, light_s, rem_s, awake_s,
+               avg_hr, avg_respiration, avg_spo2, avg_stress,
+               local_offset_s
+        FROM sleep_sessions
+        WHERE device_id = ?
+          AND start_utc >= ?
+          AND start_utc <= ?
+        ORDER BY start_utc
+        """
+
+    /// Same as `sleepNightsWindowed` but unbounded — for `.all` interval.
+    /// Bind: device_id.
+    public static let sleepNightsAll = """
+        SELECT sleep_id, start_utc, end_utc, duration_s, sleep_score,
+               deep_s, light_s, rem_s, awake_s,
+               avg_hr, avg_respiration, avg_spo2, avg_stress,
+               local_offset_s
+        FROM sleep_sessions
+        WHERE device_id = ?
+        ORDER BY start_utc
+        """
+
+    /// One sleep session by sleep_id — used by the click-to-load handler so
+    /// the user can swap the hero hypnogram to any night they pick on the
+    /// regularity heatmap. Bind: sleep_id.
+    public static let sleepSessionByID = """
+        SELECT sleep_id, start_utc, end_utc, duration_s, sleep_score,
+               deep_s, light_s, rem_s, awake_s, local_offset_s
+        FROM sleep_sessions
+        WHERE sleep_id = ?
         """
 
     // MARK: - Sync tab

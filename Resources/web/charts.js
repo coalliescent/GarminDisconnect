@@ -717,13 +717,28 @@
     function renderStressBodyBatteryTS(p)       { plot('stress-body-battery-ts', p); }
     function renderDailyIntensityMinutesBar(p)  { plot('daily-intensity-minutes-bar', p); }
     function renderStepsHourlyHeatmap(p)        { plot('steps-hourly-heatmap', p); }
+    function renderHrvDailyTrend(p)             { plot('hrv-daily-trend', p); }
+    function renderHrRangeBand(p)               { plot('hr-range-band', p); }
+    function renderDailyStepsDistanceCombo(p)   { plot('daily-steps-distance-combo', p); }
+    function renderRespirationSpo2TS(p)         { plot('respiration-spo2-ts', p); }
     function renderSleepHypnogram(p) {
         plot('sleep-hypnogram', p);
         // Show the parent activity-detail-section if it was hidden.
         const det = document.getElementById('activity-detail-section');
         if (det) det.classList.remove('hidden');
     }
-    function renderSleepRegularityHeatmap(p)    { plot('sleep-regularity-heatmap', p); }
+    function renderSleepStageDonut(p)           { plot('sleep-stage-donut', p); }
+    function renderSleepScoreTrend(p)           { plot('sleep-score-trend', p); }
+    function renderSleepDurationBar(p)          { plot('sleep-duration-bar', p); }
+    function renderSleepStageStacked(p)         { plot('sleep-stage-stacked', p); }
+    function renderSleepBedWakeScatter(p)       { plot('sleep-bed-wake-scatter', p); }
+    function renderSleepRegularityHeatmap(p) {
+        plot('sleep-regularity-heatmap', p);
+        // Click handling is dispatched Swift-side via the generic
+        // `chartClicked` event installed by attachClickBridge. The cells
+        // carry customdata = sleep_id so MainWindowController can swap the
+        // hero card to the picked night.
+    }
 
     /// Reveal the activity-detail section once an activity is selected.
     function revealActivityDetail() {
@@ -764,11 +779,20 @@
 
         // Wellness
         'stress-body-battery-ts':       renderStressBodyBatteryTS,
+        'hrv-daily-trend':              renderHrvDailyTrend,
+        'hr-range-band':                renderHrRangeBand,
+        'daily-steps-distance-combo':   renderDailyStepsDistanceCombo,
         'daily-intensity-minutes-bar':  renderDailyIntensityMinutesBar,
         'steps-hourly-heatmap':         renderStepsHourlyHeatmap,
+        'respiration-spo2-ts':          renderRespirationSpo2TS,
 
         // Sleep
         'sleep-hypnogram':              renderSleepHypnogram,
+        'sleep-stage-donut':            renderSleepStageDonut,
+        'sleep-score-trend':            renderSleepScoreTrend,
+        'sleep-duration-bar':           renderSleepDurationBar,
+        'sleep-stage-stacked':          renderSleepStageStacked,
+        'sleep-bed-wake-scatter':       renderSleepBedWakeScatter,
         'sleep-regularity-heatmap':     renderSleepRegularityHeatmap,
     };
 })();

@@ -676,11 +676,145 @@ public enum PlotlyEncoder {
         ]
     }
 
+    // MARK: - Activities / activity-summary-card (HTML, not Plotly)
+    //
+    // Headline card rendered above the per-activity detail charts. Mirrors
+    // the sleep-summary-card pattern: emit a list of (label, value) rows
+    // that bootstrap.js drops into a styled HTML block.
+
+    public static func activitySummaryCard(
+        from db: Database,
+        activityID: Int,
+        trim: TrimState? = nil
+    ) throws -> [String: Any] {
+        let chartID = "activity-summary-card"
+        guard let row = try db.queryOne("""
+            SELECT activity_id, start_time_utc, sport, sub_sport,
+                   total_timer_s, total_distance_m, total_calories,
+                   avg_hr, max_hr, avg_speed_mps, max_speed_mps,
+                   total_ascent_m, training_load, intensity_factor
+            FROM activities
+            WHERE activity_id = ?
+            """, bind: [.int(Int64(activityID))]) else {
+            return emptyPayload(chartID: chartID, message: "Activity not found")
+        }
+        let sport = row.string("sport") ?? "—"
+        let subSport = row.string("sub_sport")
+        let startISO = row.string("start_time_utc") ?? ""
+        let dur = row.double("total_timer_s")
+        let dist = row.double("total_distance_m")
+        let cal = row.int("total_calories")
+        let avgHR = row.int("avg_hr")
+        let maxHR = row.int("max_hr")
+        let avgSpeed = row.double("avg_speed_mps")
+        let ascent = row.double("total_ascent_m")
+        let load = row.double("training_load")
+        let intensity = row.double("intensity_factor")
+
+        // Sport title — capitalize sport, append sub_sport (e.g. "Running ·
+        // Trail") when present and not redundant.
+        let sportTitle: String
+        if let sub = subSport, !sub.isEmpty, sub.lowercased() != sport.lowercased() {
+            sportTitle = "\(sport.capitalized) · \(sub.capitalized)"
+        } else {
+            sportTitle = sport.capitalized
+        }
+        // Date in local-zone short form. The activities table doesn't store a
+        // local-offset, so we display in the system zone — close enough for
+        // the user's own data on their own machine.
+        let dateText: String
+        if let d = Database.iso8601.date(from: startISO) {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.dateFormat = "EEE MMM d, h:mm a"
+            dateText = f.string(from: d)
+        } else {
+            dateText = startISO
+        }
+
+        // Pace vs speed: use min/km pace for foot sports, km/h for everything
+        // else. Falls back to "—" when distance/time are missing or zero.
+        let paceOrSpeed: (label: String, value: String)
+        let isPaceSport = ["running", "walking", "hiking"].contains(sport.lowercased())
+        if isPaceSport,
+           let dist = dist, dist > 0,
+           let dur = dur, dur > 0
+        {
+            let mins = dur / 60.0
+            let pace = mins / (dist / 1000.0)
+            let m = Int(pace)
+            let s = Int((pace - Double(m)) * 60)
+            paceOrSpeed = ("Avg pace", String(format: "%d:%02d /km", m, s))
+        } else if let avgSpeed = avgSpeed {
+            paceOrSpeed = ("Avg speed", String(format: "%.1f km/h", avgSpeed * 3.6))
+        } else {
+            paceOrSpeed = ("Avg pace", "—")
+        }
+
+        var rows: [[String: Any]] = []
+        rows.append([
+            "label": "Distance",
+            "value": dist.map { String(format: "%.2f km", $0 / 1000) } ?? "—",
+        ])
+        rows.append([
+            "label": "Duration",
+            "value": dur.map { formatDuration($0) } ?? "—",
+        ])
+        rows.append([
+            "label": paceOrSpeed.label, "value": paceOrSpeed.value,
+        ])
+        rows.append([
+            "label": "Avg HR",
+            "value": avgHR.map { "\($0) bpm" } ?? "—",
+        ])
+        rows.append([
+            "label": "Max HR",
+            "value": maxHR.map { "\($0) bpm" } ?? "—",
+        ])
+        rows.append([
+            "label": "Ascent",
+            "value": ascent.map { String(format: "%.0f m", $0) } ?? "—",
+        ])
+        rows.append([
+            "label": "Calories",
+            "value": cal.map { "\($0) kcal" } ?? "—",
+        ])
+        rows.append([
+            "label": "Load",
+            "value": load.map { String(format: "%.0f", $0) } ?? "—",
+        ])
+        if let intensity = intensity {
+            rows.append([
+                "label": "Intensity",
+                "value": String(format: "%.2f", intensity),
+            ])
+        }
+        // Hint that a trim is active so the user sees that "Distance" /
+        // "Duration" reflect a clipped subset, not the raw activity.
+        if let trim = trim, !trim.ranges.isEmpty {
+            rows.append([
+                "label": "Trim",
+                "value": trim.auto ? "auto" : "manual",
+            ])
+        }
+
+        _ = trim  // unused; kept on the API surface so future trim-aware
+                  // numbers (e.g. a recomputed distance) can plug in here.
+
+        return [
+            "chart": chartID,
+            "title": sportTitle,
+            "subtitle": dateText,
+            "rows": rows,
+        ]
+    }
+
     // MARK: - Activities / activity-list (HTML table, not Plotly)
 
     public static func activityListPayload(
         from db: Database,
-        deviceID: Int
+        deviceID: Int,
+        selectedActivityID: Int? = nil
     ) throws -> [String: Any] {
         let rows = try db.query(
             Queries.activitiesList,
@@ -704,7 +838,11 @@ public enum PlotlyEncoder {
                 "training_load": load.map { String(format: "%.0f", $0) } ?? "—",
             ])
         }
-        return ["chart": "activity-list", "rows": out]
+        var payload: [String: Any] = ["chart": "activity-list", "rows": out]
+        if let sel = selectedActivityID {
+            payload["selected_activity_id"] = sel
+        }
+        return payload
     }
 
     // MARK: - Activities / weekly-distance-bar
@@ -2046,6 +2184,456 @@ public enum PlotlyEncoder {
         ]
     }
 
+    // MARK: - Wellness / hrv-daily-trend
+
+    static let hrvDailyDefaultInterval: ChartInterval = .month
+    static let hrvDailyIntervals: [ChartInterval] = [.month, .year, .all]
+
+    public static func hrvDailyTrend(
+        from db: Database,
+        deviceID: Int
+    ) throws -> [String: Any] {
+        let chartID = "hrv-daily-trend"
+        let window = ChartWindowStore.shared.window(
+            for: chartID, defaultInterval: hrvDailyDefaultInterval
+        )
+        let dataRange = dataDateRange(db, sql: """
+            SELECT MIN(date(timestamp_utc, 'localtime')) AS date_min,
+                   MAX(date(timestamp_utc, 'localtime')) AS date_max
+            FROM wellness_samples
+            WHERE device_id = ? AND metric = 'hrv_value_ms' AND value IS NOT NULL
+            """, bind: [.int(Int64(deviceID))])
+        let rows: [Row]
+        if window.interval == .all {
+            rows = try db.query(
+                Queries.wellnessHRVDaily, bind: [.int(Int64(deviceID))]
+            )
+        } else {
+            rows = try db.query(
+                Queries.wellnessHRVDailyWindowed,
+                bind: [
+                    .int(Int64(deviceID)),
+                    .text(window.startTimestampISO),
+                    .text(window.endTimestampISO),
+                ]
+            )
+        }
+        var raw: [(date: Date, value: Double?)] = []
+        for row in rows {
+            guard
+                let dayStr = row.string("date_local"),
+                let date = DateUtil.day(from: dayStr)
+            else { continue }
+            raw.append((date, row.double("hrv_ms")))
+        }
+        guard !raw.isEmpty else {
+            var payload = emptyPayload(chartID: chartID, message: "No HRV data in this window")
+            payload["window"] = windowControlsPayload(
+                window: window, intervals: hrvDailyIntervals, dataRange: dataRange
+            )
+            return payload
+        }
+        let dense = DateUtil.fillGaps(raw)
+        let xs = dense.map { DateUtil.dayString(from: $0.date) }
+        let ys: [Any] = dense.map { nullable($0.value) }
+        var rolling: [Any] = []
+        for i in 0..<dense.count {
+            let lo = max(0, i - 6)
+            let slice = dense[lo...i].compactMap { $0.value }
+            rolling.append(slice.isEmpty
+                ? NSNull()
+                : (slice.reduce(0, +) / Double(slice.count)) as Any)
+        }
+
+        let pointTrace: [String: Any] = [
+            "type": "scatter", "mode": "markers",
+            "x": xs, "y": ys, "name": "nightly",
+            "marker": ["color": "#888888", "size": 5],
+            "hovertemplate": "%{x|%b %-d, %Y}<br>%{y:.0f} ms<extra></extra>",
+        ]
+        let smoothTrace: [String: Any] = [
+            "type": "scatter", "mode": "lines",
+            "x": xs, "y": rolling, "name": "7-day mean",
+            "line": ["color": "#c586c0", "width": 2],
+            "connectgaps": false,
+            "hovertemplate": "%{x|%b %-d, %Y}<br>%{y:.1f} ms (avg)<extra></extra>",
+        ]
+
+        var layout = darkLayout(title: "HRV (overnight)", height: 280)
+        layout["showlegend"] = true
+        layout["legend"] = topHorizontalLegend
+        layout["xaxis"] = dateAxisLayout(for: window)
+        var yaxis = layout["yaxis"] as! [String: Any]
+        yaxis["title"] = ["text": "ms", "font": ["color": "#888888", "size": 10]]
+        layout["yaxis"] = yaxis
+
+        return [
+            "chart": chartID,
+            "data": [pointTrace, smoothTrace],
+            "layout": layout,
+            "config": defaultConfig,
+            "window": windowControlsPayload(
+                window: window, intervals: hrvDailyIntervals, dataRange: dataRange
+            ),
+        ]
+    }
+
+    // MARK: - Wellness / hr-range-band
+
+    static let hrRangeBandDefaultInterval: ChartInterval = .month
+    static let hrRangeBandIntervals: [ChartInterval] = [.month, .year, .all]
+
+    public static func hrRangeBand(
+        from db: Database,
+        deviceID: Int
+    ) throws -> [String: Any] {
+        let chartID = "hr-range-band"
+        let window = ChartWindowStore.shared.window(
+            for: chartID, defaultInterval: hrRangeBandDefaultInterval
+        )
+        let dataRange = dataDateRange(db, sql: """
+            SELECT MIN(date_local) AS date_min, MAX(date_local) AS date_max FROM wellness_daily
+            WHERE device_id = ? AND (min_hr IS NOT NULL OR max_hr IS NOT NULL)
+            """, bind: [.int(Int64(deviceID))])
+        let rows: [Row]
+        if window.interval == .all {
+            rows = try db.query(
+                Queries.wellnessHRRangeDaily, bind: [.int(Int64(deviceID))]
+            )
+        } else {
+            rows = try db.query(
+                Queries.wellnessHRRangeDailyWindowed,
+                bind: [
+                    .int(Int64(deviceID)),
+                    .text(window.startDateLocal),
+                    .text(window.endDateLocal),
+                ]
+            )
+        }
+        struct Day { let date: Date; let rest: Double?; let lo: Double?; let hi: Double? }
+        var raw: [Day] = []
+        for row in rows {
+            guard
+                let dayStr = row.string("date_local"),
+                let date = DateUtil.day(from: dayStr)
+            else { continue }
+            raw.append(Day(
+                date: date,
+                rest: row.int("resting_hr").map(Double.init),
+                lo: row.int("min_hr").map(Double.init),
+                hi: row.int("max_hr").map(Double.init)
+            ))
+        }
+        guard !raw.isEmpty else {
+            var payload = emptyPayload(chartID: chartID, message: "No HR data in this window")
+            payload["window"] = windowControlsPayload(
+                window: window, intervals: hrRangeBandIntervals, dataRange: dataRange
+            )
+            return payload
+        }
+
+        let xs = raw.map { DateUtil.dayString(from: $0.date) }
+        let los: [Any] = raw.map { nullable($0.lo) }
+        let his: [Any] = raw.map { nullable($0.hi) }
+        let rests: [Any] = raw.map { nullable($0.rest) }
+
+        // Two-trace fill trick: first an invisible "min" line, then a "max"
+        // line with `fill: tonexty` shading the area between. The shaded
+        // region IS the daily HR variability range.
+        let bandLow: [String: Any] = [
+            "type": "scatter", "mode": "lines",
+            "x": xs, "y": los,
+            "line": ["color": "rgba(0,0,0,0)", "width": 0],
+            "showlegend": false,
+            "hoverinfo": "skip",
+        ]
+        let bandHigh: [String: Any] = [
+            "type": "scatter", "mode": "lines",
+            "x": xs, "y": his,
+            "name": "daily HR range",
+            "fill": "tonexty",
+            "fillcolor": "rgba(78, 201, 176, 0.18)",
+            "line": ["color": "rgba(0,0,0,0)", "width": 0],
+            "hovertemplate": "%{x|%b %-d, %Y}<br>max %{y:.0f} bpm<extra></extra>",
+        ]
+        let restLine: [String: Any] = [
+            "type": "scatter", "mode": "lines",
+            "x": xs, "y": rests,
+            "name": "resting",
+            "line": ["color": "#569cd6", "width": 2, "dash": "dot"],
+            "connectgaps": false,
+            "hovertemplate": "%{x|%b %-d, %Y}<br>resting %{y:.0f} bpm<extra></extra>",
+        ]
+
+        var layout = darkLayout(title: "Heart rate range", height: 280)
+        layout["showlegend"] = true
+        layout["legend"] = topHorizontalLegend
+        layout["xaxis"] = dateAxisLayout(for: window)
+        var yaxis = layout["yaxis"] as! [String: Any]
+        yaxis["title"] = ["text": "bpm", "font": ["color": "#888888", "size": 10]]
+        layout["yaxis"] = yaxis
+
+        return [
+            "chart": chartID,
+            "data": [bandLow, bandHigh, restLine],
+            "layout": layout,
+            "config": defaultConfig,
+            "window": windowControlsPayload(
+                window: window, intervals: hrRangeBandIntervals, dataRange: dataRange
+            ),
+        ]
+    }
+
+    // MARK: - Wellness / daily-steps-distance-combo
+
+    static let stepsDistanceComboDefaultInterval: ChartInterval = .month
+    static let stepsDistanceComboIntervals: [ChartInterval] = [.week, .month, .year, .all]
+
+    public static func dailyStepsDistanceCombo(
+        from db: Database,
+        deviceID: Int
+    ) throws -> [String: Any] {
+        let chartID = "daily-steps-distance-combo"
+        let window = ChartWindowStore.shared.window(
+            for: chartID, defaultInterval: stepsDistanceComboDefaultInterval
+        )
+        let dataRange = dataDateRange(db, sql: """
+            SELECT MIN(date_local) AS date_min, MAX(date_local) AS date_max FROM wellness_daily
+            WHERE device_id = ? AND (steps IS NOT NULL OR distance_m IS NOT NULL)
+            """, bind: [.int(Int64(deviceID))])
+        let rows: [Row]
+        if window.interval == .all {
+            rows = try db.query(
+                Queries.wellnessStepsDistanceDaily, bind: [.int(Int64(deviceID))]
+            )
+        } else {
+            rows = try db.query(
+                Queries.wellnessStepsDistanceDailyWindowed,
+                bind: [
+                    .int(Int64(deviceID)),
+                    .text(window.startDateLocal),
+                    .text(window.endDateLocal),
+                ]
+            )
+        }
+        struct Row2 { let date: Date; let steps: Double?; let km: Double? }
+        var raw: [Row2] = []
+        for row in rows {
+            guard
+                let dayStr = row.string("date_local"),
+                let date = DateUtil.day(from: dayStr)
+            else { continue }
+            let km = row.double("distance_m").map { $0 / 1000.0 }
+            raw.append(Row2(
+                date: date,
+                steps: row.int("steps").map(Double.init),
+                km: km
+            ))
+        }
+        guard !raw.isEmpty else {
+            var payload = emptyPayload(chartID: chartID, message: "No step data in this window")
+            payload["window"] = windowControlsPayload(
+                window: window, intervals: stepsDistanceComboIntervals, dataRange: dataRange
+            )
+            return payload
+        }
+
+        let xs = raw.map { DateUtil.dayString(from: $0.date) }
+        let stepsY: [Any] = raw.map { nullable($0.steps) }
+        let kmY: [Any] = raw.map { nullable($0.km) }
+
+        let stepsTrace: [String: Any] = [
+            "type": "bar",
+            "x": xs, "y": stepsY,
+            "name": "steps",
+            "marker": ["color": "#569cd6"],
+            "hovertemplate": "%{x|%a %b %-d, %Y}<br>%{y:,.0f} steps<extra></extra>",
+            "yaxis": "y",
+        ]
+        let kmTrace: [String: Any] = [
+            "type": "scatter", "mode": "lines+markers",
+            "x": xs, "y": kmY,
+            "name": "distance (km)",
+            "line": ["color": "#4ec9b0", "width": 2],
+            "marker": ["size": 4],
+            "connectgaps": false,
+            "hovertemplate": "%{x|%a %b %-d, %Y}<br>%{y:.2f} km<extra></extra>",
+            "yaxis": "y2",
+        ]
+
+        var layout = darkLayout(title: "Daily steps & distance", height: 280)
+        layout["xaxis"] = dateAxisLayout(for: window)
+        layout["yaxis"] = [
+            "title": ["text": "steps", "font": ["color": "#569cd6", "size": 10]],
+            "tickfont": ["color": "#569cd6", "size": 10],
+            "showgrid": true, "gridcolor": "#333333",
+            "rangemode": "tozero",
+            "automargin": true,
+        ] as [String: Any]
+        layout["yaxis2"] = [
+            "title": ["text": "km", "font": ["color": "#4ec9b0", "size": 10]],
+            "tickfont": ["color": "#4ec9b0", "size": 10],
+            "overlaying": "y", "side": "right",
+            "showgrid": false,
+            "rangemode": "tozero",
+            "automargin": true,
+        ] as [String: Any]
+        layout["showlegend"] = true
+        layout["legend"] = topHorizontalLegend
+        layout["bargap"] = 0.25
+        layout["margin"] = ["l": 60, "r": 60, "t": 70, "b": 40]
+
+        return [
+            "chart": chartID,
+            "data": [stepsTrace, kmTrace],
+            "layout": layout,
+            "config": defaultConfig,
+            "window": windowControlsPayload(
+                window: window, intervals: stepsDistanceComboIntervals, dataRange: dataRange
+            ),
+        ]
+    }
+
+    // MARK: - Wellness / respiration-spo2-ts
+
+    static let respSpo2DefaultInterval: ChartInterval = .month
+    static let respSpo2Intervals: [ChartInterval] = [.month, .year, .all]
+
+    public static func respirationSpo2TS(
+        from db: Database,
+        deviceID: Int
+    ) throws -> [String: Any] {
+        let chartID = "respiration-spo2-ts"
+        let window = ChartWindowStore.shared.window(
+            for: chartID, defaultInterval: respSpo2DefaultInterval
+        )
+        let dataRange = dataDateRange(db, sql: """
+            SELECT MIN(date_local) AS date_min, MAX(date_local) AS date_max FROM wellness_daily
+            WHERE device_id = ?
+              AND (respiration_avg IS NOT NULL OR spo2_avg IS NOT NULL)
+            """, bind: [.int(Int64(deviceID))])
+        let rows: [Row]
+        if window.interval == .all {
+            rows = try db.query(
+                Queries.wellnessRespirationSpo2Daily, bind: [.int(Int64(deviceID))]
+            )
+        } else {
+            rows = try db.query(
+                Queries.wellnessRespirationSpo2DailyWindowed,
+                bind: [
+                    .int(Int64(deviceID)),
+                    .text(window.startDateLocal),
+                    .text(window.endDateLocal),
+                ]
+            )
+        }
+        struct Row3 { let date: Date; let resp: Double?; let spo2: Double? }
+        var raw: [Row3] = []
+        for row in rows {
+            guard
+                let dayStr = row.string("date_local"),
+                let date = DateUtil.day(from: dayStr)
+            else { continue }
+            raw.append(Row3(
+                date: date,
+                resp: row.double("respiration_avg"),
+                spo2: row.int("spo2_avg").map(Double.init)
+            ))
+        }
+        guard !raw.isEmpty else {
+            var payload = emptyPayload(
+                chartID: chartID,
+                message: "Respiration and SpO2 not logged on this device"
+            )
+            payload["window"] = windowControlsPayload(
+                window: window, intervals: respSpo2Intervals, dataRange: dataRange
+            )
+            return payload
+        }
+
+        let xs = raw.map { DateUtil.dayString(from: $0.date) }
+        let respY: [Any] = raw.map { nullable($0.resp) }
+        let spo2Y: [Any] = raw.map { nullable($0.spo2) }
+
+        let respTrace: [String: Any] = [
+            "type": "scatter", "mode": "lines+markers",
+            "x": xs, "y": respY,
+            "name": "respiration",
+            "line": ["color": "#4ec9b0", "width": 2],
+            "marker": ["size": 4],
+            "connectgaps": false,
+            "hovertemplate": "%{x|%b %-d, %Y}<br>%{y:.1f} br/min<extra></extra>",
+            "xaxis": "x", "yaxis": "y",
+        ]
+        let spo2Trace: [String: Any] = [
+            "type": "scatter", "mode": "lines+markers",
+            "x": xs, "y": spo2Y,
+            "name": "SpO2",
+            "line": ["color": "#569cd6", "width": 2],
+            "marker": ["size": 4],
+            "connectgaps": false,
+            "hovertemplate": "%{x|%b %-d, %Y}<br>%{y:.0f}%<extra></extra>",
+            "xaxis": "x2", "yaxis": "y2",
+        ]
+
+        var layout = darkLayout(title: "Respiration & SpO2", height: 320)
+        layout["showlegend"] = false
+        layout["xaxis"] = {
+            var ax = dateAxisLayout(for: window)
+            ax["domain"] = [0, 1]
+            ax["anchor"] = "y"
+            return ax
+        }()
+        layout["xaxis2"] = {
+            var ax = dateAxisLayout(for: window)
+            ax["domain"] = [0, 1]
+            ax["anchor"] = "y2"
+            return ax
+        }()
+        layout["yaxis"] = [
+            "domain": [0.55, 1.0],
+            "title": ["text": "br/min", "font": ["color": "#4ec9b0", "size": 10]],
+            "tickfont": ["color": "#888888", "size": 10],
+            "showgrid": true, "gridcolor": "#333333",
+            "automargin": true,
+        ] as [String: Any]
+        layout["yaxis2"] = [
+            "domain": [0, 0.45],
+            "title": ["text": "%", "font": ["color": "#569cd6", "size": 10]],
+            "tickfont": ["color": "#888888", "size": 10],
+            "showgrid": true, "gridcolor": "#333333",
+            "automargin": true,
+        ] as [String: Any]
+        layout["margin"] = ["l": 50, "r": 30, "t": 70, "b": 40]
+        // Subtle subplot labels via annotations.
+        layout["annotations"] = [
+            [
+                "xref": "paper", "yref": "paper",
+                "x": 0.0, "xanchor": "left",
+                "y": 1.0, "yanchor": "bottom",
+                "text": "respiration", "showarrow": false,
+                "font": ["color": "#4ec9b0", "size": 10],
+            ] as [String: Any],
+            [
+                "xref": "paper", "yref": "paper",
+                "x": 0.0, "xanchor": "left",
+                "y": 0.45, "yanchor": "bottom",
+                "text": "SpO2", "showarrow": false,
+                "font": ["color": "#569cd6", "size": 10],
+            ] as [String: Any],
+        ]
+
+        return [
+            "chart": chartID,
+            "data": [respTrace, spo2Trace],
+            "layout": layout,
+            "config": defaultConfig,
+            "window": windowControlsPayload(
+                window: window, intervals: respSpo2Intervals, dataRange: dataRange
+            ),
+        ]
+    }
+
     // MARK: - Sleep / hypnogram
 
     public static func sleepHypnogram(
@@ -2058,25 +2646,50 @@ public enum PlotlyEncoder {
         ) else {
             return emptyPayload(chartID: "sleep-hypnogram", message: "No sleep data yet")
         }
+        return try sleepHypnogramPayload(db: db, session: session)
+    }
+
+    /// Click-to-load variant: build the hypnogram for a specific sleep_id.
+    /// Reached via the regularity-heatmap click bridge, which posts back the
+    /// `customdata` (sleep_id) to Swift.
+    public static func sleepHypnogramFor(
+        from db: Database,
+        sleepID: Int
+    ) throws -> [String: Any] {
+        guard let session = try db.queryOne(
+            Queries.sleepSessionByID, bind: [.int(Int64(sleepID))]
+        ) else {
+            return emptyPayload(chartID: "sleep-hypnogram", message: "Sleep session not found")
+        }
+        return try sleepHypnogramPayload(db: db, session: session)
+    }
+
+    private static func sleepHypnogramPayload(
+        db: Database,
+        session: Row
+    ) throws -> [String: Any] {
         let sleepID = session.int("sleep_id") ?? 0
         let stages = try db.query(
-            Queries.sleepStagesForSession,
-            bind: [.int(Int64(sleepID))]
+            Queries.sleepStagesForSession, bind: [.int(Int64(sleepID))]
         )
+        let offset = session.int("local_offset_s")
 
         // Stage colors. Y values are level numbers so the chart looks like a
         // step-down hypnogram (deep at bottom, awake at top).
-        let stageMap: [String: (level: Double, color: String)] = [
-            "awake":   (4, "#f48771"),
-            "rem":     (3, "#c586c0"),
-            "light":   (2, "#569cd6"),
-            "deep":    (1, "#4ec9b0"),
-            "unknown": (0, "#666666"),
+        struct StageMeta { let level: Double; let color: String; let display: String }
+        let stageMap: [String: StageMeta] = [
+            "awake":   StageMeta(level: 4, color: "#f48771", display: "Awake"),
+            "rem":     StageMeta(level: 3, color: "#c586c0", display: "REM"),
+            "light":   StageMeta(level: 2, color: "#569cd6", display: "Light"),
+            "deep":    StageMeta(level: 1, color: "#4ec9b0", display: "Deep"),
+            "unknown": StageMeta(level: 0, color: "#666666", display: "—"),
         ]
 
-        var xs: [String] = []
-        var ys: [Any] = []
-        var colors: [String] = []
+        // Per-stage trace so each segment renders in its stage color. Plotly
+        // disconnects segments via NSNull placeholders within the same trace,
+        // so deep/light/REM/awake each get their own [(start, end, NSNull),
+        // ...] series. Skipping zero-length traces keeps the legend clean.
+        var perStage: [String: (xs: [Any], ys: [Any])] = [:]
         for row in stages {
             guard
                 let startStr = row.string("start_utc"),
@@ -2084,48 +2697,79 @@ public enum PlotlyEncoder {
                 Database.iso8601.date(from: startStr) != nil,
                 Database.iso8601.date(from: endStr) != nil
             else { continue }
-            let stage = row.string("stage")?.lowercased() ?? "unknown"
-            let map = stageMap[stage] ?? stageMap["unknown"]!
-            // Plot two points per stage segment to make a horizontal "shelf".
-            xs.append(startStr); ys.append(map.level); colors.append(map.color)
-            xs.append(endStr);   ys.append(map.level); colors.append(map.color)
-            xs.append("");       ys.append(NSNull());  colors.append(map.color)  // gap
+            let key = row.string("stage")?.lowercased() ?? "unknown"
+            let meta = stageMap[key] ?? stageMap["unknown"]!
+            var entry = perStage[key] ?? (xs: [], ys: [])
+            entry.xs.append(startStr); entry.ys.append(meta.level)
+            entry.xs.append(endStr);   entry.ys.append(meta.level)
+            entry.xs.append(NSNull()); entry.ys.append(NSNull())
+            perStage[key] = entry
         }
-        guard !xs.isEmpty else {
+        guard !perStage.isEmpty else {
             return emptyPayload(chartID: "sleep-hypnogram", message: "No sleep stages parsed")
         }
 
-        let trace: [String: Any] = [
-            "type": "scatter", "mode": "lines",
-            "x": xs, "y": ys,
-            "line": ["color": "#4ec9b0", "width": 4, "shape": "hv"],
-            "connectgaps": false,
-            "hovertemplate": "%{x}<br>level %{y}<extra></extra>",
-        ]
-
-        let scoreText: String
-        if let score = session.int("sleep_score") {
-            scoreText = "score \(score)"
-        } else {
-            scoreText = "—"
+        // Sort by level descending so awake renders first (top of legend),
+        // matching the y-axis layout.
+        let order = ["awake", "rem", "light", "deep"]
+        var traces: [[String: Any]] = []
+        for key in order {
+            guard let entry = perStage[key], let meta = stageMap[key] else { continue }
+            traces.append([
+                "type": "scatter", "mode": "lines",
+                "x": entry.xs, "y": entry.ys,
+                "name": meta.display,
+                "line": ["color": meta.color, "width": 4, "shape": "hv"],
+                "connectgaps": false,
+                "hovertemplate": "%{x|%-l:%M %p}<br>\(meta.display)<extra></extra>",
+            ])
         }
 
-        var layout = darkLayout(title: "Last night — \(scoreText)", height: 260)
+        let nightLabel = sleepNightLabel(
+            startUTC: session.string("start_utc"), offsetSeconds: offset
+        )
+        let scoreText: String
+        if let score = session.int("sleep_score") {
+            scoreText = "  ·  score \(score)"
+        } else {
+            scoreText = ""
+        }
+
+        var layout = darkLayout(title: "\(nightLabel)\(scoreText)", height: 260)
         var xaxis = layout["xaxis"] as! [String: Any]
         xaxis["type"] = "date"
+        xaxis["tickformat"] = "%-l%p"
         layout["xaxis"] = xaxis
         var yaxis = layout["yaxis"] as! [String: Any]
         yaxis["tickvals"] = [1, 2, 3, 4]
         yaxis["ticktext"] = ["deep", "light", "REM", "awake"]
         yaxis["range"] = [0.5, 4.5]
         layout["yaxis"] = yaxis
+        layout["showlegend"] = true
+        layout["legend"] = topHorizontalLegend
 
         return [
             "chart": "sleep-hypnogram",
-            "data": [trace],
+            "data": traces,
             "layout": layout,
             "config": defaultConfig,
         ]
+    }
+
+    /// Format a sleep session's start time as a human-readable label in the
+    /// wearer's local zone, e.g. "Tue Apr 28". Returns "Last night" if the
+    /// timestamp can't be parsed.
+    private static func sleepNightLabel(startUTC: String?, offsetSeconds: Int?) -> String {
+        guard let s = startUTC, let date = Database.iso8601.date(from: s) else {
+            return "Last night"
+        }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        if let off = offsetSeconds {
+            f.timeZone = TimeZone(secondsFromGMT: off) ?? .current
+        }
+        f.dateFormat = "EEE MMM d"
+        return f.string(from: date)
     }
 
     // MARK: - Sleep / regularity-heatmap
@@ -2148,7 +2792,8 @@ public enum PlotlyEncoder {
         let rows: [Row]
         if window.interval == .all {
             rows = try db.query("""
-                SELECT start_utc, end_utc, sleep_score FROM sleep_sessions
+                SELECT sleep_id, start_utc, end_utc, sleep_score, local_offset_s
+                FROM sleep_sessions
                 WHERE device_id = ? ORDER BY start_utc
                 """, bind: [.int(Int64(deviceID))])
         } else {
@@ -2171,19 +2816,21 @@ public enum PlotlyEncoder {
             )
             return payload
         }
-        // Build a [day-row][hour-col] grid where each cell is 1 if the user
-        // was asleep at that hour. Day-of-row and hour-of-column are both
-        // computed in the wearer's local time zone (per-session offset from
-        // sleep_sessions.local_offset_s, falling back to system TZ when the
-        // session predates the schema-v2 column or was logged with no
-        // offset). Otherwise the heatmap shows UTC-noon-as-bedtime, which
-        // is meaningless for circadian patterns.
-        struct LocalSession {
+        // Build a [day-row][hour-col] grid where each cell is the sleep
+        // score of whatever session covers that hour. Day-of-row and
+        // hour-of-column are both computed in the wearer's local time zone
+        // (per-session offset from sleep_sessions.local_offset_s, falling
+        // back to system TZ when the session predates the schema-v2 column
+        // or was logged with no offset). Otherwise the heatmap would show
+        // UTC-noon-as-bedtime, meaningless for circadian patterns.
+        struct ScoredSession {
+            let id: Int
             let start: Date
             let end: Date
+            let score: Double
             let cal: Calendar
         }
-        var rawSessions: [LocalSession] = []
+        var scoredSessions: [ScoredSession] = []
         for row in rows {
             guard
                 let s = row.string("start_utc"),
@@ -2192,9 +2839,16 @@ public enum PlotlyEncoder {
                 let ed = Database.iso8601.date(from: e)
             else { continue }
             let cal = DateUtil.localCalendar(offsetSeconds: row.int("local_offset_s"))
-            rawSessions.append(LocalSession(start: sd, end: ed, cal: cal))
+            let id = row.int("sleep_id") ?? 0
+            // Score column may be NULL (e.g. naps, partial nights). Use a
+            // neutral mid-range value so the cell still paints, but in a
+            // visibly less-saturated tone than a real high-scoring night.
+            let score = row.int("sleep_score").map(Double.init) ?? 60.0
+            scoredSessions.append(ScoredSession(
+                id: id, start: sd, end: ed, score: score, cal: cal
+            ))
         }
-        guard !rawSessions.isEmpty else {
+        guard !scoredSessions.isEmpty else {
             var payload = emptyPayload(
                 chartID: chartID,
                 message: "No sleep sessions in this window"
@@ -2207,19 +2861,22 @@ public enum PlotlyEncoder {
 
         // Anchor: the right edge of the window (or "today" for `.all`),
         // pinned to start-of-day in the most recent session's local zone.
-        let anchorCal = rawSessions.last!.cal
+        let anchorCal = scoredSessions.last!.cal
         let anchorRef = window.interval == .all ? Date() : window.endDate
         let anchorDay = anchorCal.startOfDay(for: anchorRef)
         // Number of day rows = the window span. For `.all`, default to 90.
         let numDays = window.interval == .all ? 90 : window.interval.spanDays
         var z: [[Any]] = Array(repeating: Array(repeating: NSNull() as Any, count: 24), count: numDays)
+        // Parallel customdata grid carrying sleep_id per cell so the JS
+        // click bridge can post a "sleepNightSelected" event back to Swift.
+        var custom: [[Any]] = Array(repeating: Array(repeating: NSNull() as Any, count: 24), count: numDays)
         var dayLabels: [String] = []
         for i in 0..<numDays {
             let day = DateUtil.adding(days: -(numDays - 1 - i), to: anchorDay)
             dayLabels.append(DateUtil.dayString(from: day))
         }
 
-        for sess in rawSessions {
+        for sess in scoredSessions {
             // Walk hour by hour through the session, using THIS session's
             // local calendar to bucket. Different sessions can have different
             // offsets if the user travelled between them.
@@ -2230,7 +2887,8 @@ public enum PlotlyEncoder {
                 let dayIndex = dayOffset + (numDays - 1)
                 let hour = sess.cal.component(.hour, from: cursor)
                 if dayIndex >= 0 && dayIndex < numDays && hour >= 0 && hour < 24 {
-                    z[dayIndex][hour] = 1.0
+                    z[dayIndex][hour] = sess.score
+                    custom[dayIndex][hour] = sess.id
                 }
                 cursor = cursor.addingTimeInterval(60 * 60)
             }
@@ -2241,13 +2899,20 @@ public enum PlotlyEncoder {
             "z": z,
             "x": (0..<24).map { String($0) },
             "y": dayLabels,
+            "customdata": custom,
+            // 0–100 score gradient: dark teal at low scores, bright accent
+            // at high scores. Cells under ~40 stay deliberately dim so
+            // pour-quality nights read as such at a glance.
+            "zmin": 0, "zmax": 100,
             "colorscale": [
-                [0.0, "#1e1e1e"],
-                [1.0, "#4ec9b0"],
+                [0.0,  "#1e2a26"],
+                [0.4,  "#2a4a40"],
+                [0.7,  "#3a8a78"],
+                [1.0,  "#4ec9b0"],
             ] as [Any],
             "showscale": false,
             "hoverongaps": false,
-            "hovertemplate": "%{y} %{x}:00<br>asleep<extra></extra>",
+            "hovertemplate": "%{y} %{x}:00<br>asleep — score %{z:.0f}<br><i>click to load this night</i><extra></extra>",
             "xgap": 0, "ygap": 1,
         ]
 
@@ -2272,6 +2937,636 @@ public enum PlotlyEncoder {
                 window: window, intervals: sleepRegularityIntervals, dataRange: dataRange
             ),
         ]
+    }
+
+    // MARK: - Sleep / stage donut + summary card
+    //
+    // The hero card on the Sleep tab is composed of three independent slots
+    // arranged side-by-side in HTML: hypnogram (left), stage donut (middle),
+    // and a textual summary (right). Each is its own Plotly chart-id so the
+    // existing render dispatch keeps working — they just happen to live
+    // inside a `.sleep-hero` flex row in the DOM.
+
+    public static func sleepStageDonut(
+        from db: Database,
+        deviceID: Int
+    ) throws -> [String: Any] {
+        guard let session = try db.queryOne(
+            Queries.sleepLatestSession, bind: [.int(Int64(deviceID))]
+        ) else {
+            return emptyPayload(chartID: "sleep-stage-donut", message: "No sleep data yet")
+        }
+        return sleepStageDonutPayload(session: session)
+    }
+
+    public static func sleepStageDonutFor(
+        from db: Database,
+        sleepID: Int
+    ) throws -> [String: Any] {
+        guard let session = try db.queryOne(
+            Queries.sleepSessionByID, bind: [.int(Int64(sleepID))]
+        ) else {
+            return emptyPayload(chartID: "sleep-stage-donut", message: "Sleep session not found")
+        }
+        return sleepStageDonutPayload(session: session)
+    }
+
+    private static func sleepStageDonutPayload(session: Row) -> [String: Any] {
+        let deep = session.int("deep_s") ?? 0
+        let light = session.int("light_s") ?? 0
+        let rem = session.int("rem_s") ?? 0
+        let awake = session.int("awake_s") ?? 0
+        let asleep = deep + light + rem
+        guard asleep > 0 else {
+            return emptyPayload(chartID: "sleep-stage-donut", message: "No stage breakdown")
+        }
+        // Order intentionally matches the hypnogram's reading order.
+        let labels = ["Deep", "Light", "REM", "Awake"]
+        let values = [deep, light, rem, awake]
+        let colors = ["#4ec9b0", "#569cd6", "#c586c0", "#f48771"]
+
+        let trace: [String: Any] = [
+            "type": "pie",
+            "labels": labels,
+            "values": values,
+            "hole": 0.62,
+            "sort": false,
+            "direction": "clockwise",
+            "marker": ["colors": colors, "line": ["color": "#1e1e1e", "width": 2]] as [String: Any],
+            "textinfo": "label+percent",
+            "textfont": ["color": "#dddddd", "size": 11],
+            "hovertemplate": "%{label}: %{value:,.0f}s (%{percent})<extra></extra>",
+        ]
+
+        let totalText = formatDuration(Double(asleep))
+        var layout = darkLayout(title: "Stage breakdown", height: 260)
+        layout["showlegend"] = false
+        layout["margin"] = ["l": 20, "r": 20, "t": 60, "b": 20]
+        layout["annotations"] = [[
+            "x": 0.5, "y": 0.5,
+            "xref": "paper", "yref": "paper",
+            "text": "<b>\(totalText)</b><br><span style='color:#888;font-size:10px'>asleep</span>",
+            "showarrow": false,
+            "font": ["color": "#dddddd", "size": 16],
+            "align": "center",
+        ] as [String: Any]]
+
+        return [
+            "chart": "sleep-stage-donut",
+            "data": [trace],
+            "layout": layout,
+            "config": defaultConfig,
+        ]
+    }
+
+    /// Plain-text summary card: bedtime, wake time, total time in bed,
+    /// efficiency, awakenings count. Renders as HTML in bootstrap.js, not
+    /// Plotly — emit a payload with the values pre-formatted.
+    public static func sleepSummaryCard(
+        from db: Database,
+        deviceID: Int
+    ) throws -> [String: Any] {
+        guard let session = try db.queryOne(
+            Queries.sleepLatestSession, bind: [.int(Int64(deviceID))]
+        ) else {
+            return emptyPayload(chartID: "sleep-summary-card", message: "No sleep data yet")
+        }
+        return try sleepSummaryCardPayload(db: db, session: session)
+    }
+
+    public static func sleepSummaryCardFor(
+        from db: Database,
+        sleepID: Int
+    ) throws -> [String: Any] {
+        guard let session = try db.queryOne(
+            Queries.sleepSessionByID, bind: [.int(Int64(sleepID))]
+        ) else {
+            return emptyPayload(chartID: "sleep-summary-card", message: "Sleep session not found")
+        }
+        return try sleepSummaryCardPayload(db: db, session: session)
+    }
+
+    private static func sleepSummaryCardPayload(
+        db: Database,
+        session: Row
+    ) throws -> [String: Any] {
+        let offset = session.int("local_offset_s")
+        let nightLabel = sleepNightLabel(
+            startUTC: session.string("start_utc"), offsetSeconds: offset
+        )
+        let bedTime = sleepClockLabel(
+            iso: session.string("start_utc"), offsetSeconds: offset
+        )
+        let wakeTime = sleepClockLabel(
+            iso: session.string("end_utc"), offsetSeconds: offset
+        )
+        let deep = session.int("deep_s") ?? 0
+        let light = session.int("light_s") ?? 0
+        let rem = session.int("rem_s") ?? 0
+        let awake = session.int("awake_s") ?? 0
+        let asleep = deep + light + rem
+        let inBed = asleep + awake
+        let durationText = asleep > 0 ? formatDuration(Double(asleep)) : "—"
+        let efficiencyText: String
+        if inBed > 0 {
+            let pct = Int((Double(asleep) / Double(inBed) * 100.0).rounded())
+            efficiencyText = "\(pct)%"
+        } else {
+            efficiencyText = "—"
+        }
+        // Awakenings = stage transitions to "awake".
+        let sleepID = session.int("sleep_id") ?? 0
+        let awakenings = (try? db.scalarInt("""
+            SELECT COUNT(*) FROM sleep_stages
+            WHERE sleep_id = ? AND lower(stage) = 'awake'
+            """, bind: [.int(Int64(sleepID))])) ?? 0
+        let scoreText = session.int("sleep_score").map { String($0) } ?? "—"
+
+        return [
+            "chart": "sleep-summary-card",
+            "title": nightLabel,
+            "rows": [
+                ["label": "Score",       "value": scoreText],
+                ["label": "Asleep",      "value": durationText],
+                ["label": "Bed time",    "value": bedTime],
+                ["label": "Wake time",   "value": wakeTime],
+                ["label": "Efficiency",  "value": efficiencyText],
+                ["label": "Awakenings",  "value": String(awakenings)],
+            ],
+        ]
+    }
+
+    private static func sleepClockLabel(iso: String?, offsetSeconds: Int?) -> String {
+        guard let s = iso, let date = Database.iso8601.date(from: s) else { return "—" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        if let off = offsetSeconds {
+            f.timeZone = TimeZone(secondsFromGMT: off) ?? .current
+        }
+        f.dateFormat = "h:mm a"
+        return f.string(from: date)
+    }
+
+    // MARK: - Sleep / score-trend, duration-bar, stage-stacked, bed-wake-scatter
+
+    /// Walk a windowed query over `sleep_sessions`, returning each row's
+    /// useful fields parsed into a struct. Shared by all four trend encoders
+    /// below since they all need the same parse.
+    private struct SleepNight {
+        let id: Int
+        let start: Date
+        let end: Date
+        let local: Calendar
+        let durationS: Int
+        let score: Int?
+        let deepS: Int
+        let lightS: Int
+        let remS: Int
+        let awakeS: Int
+        /// Local-zone date label (e.g. "2026-04-28") used as the categorical
+        /// x-axis tick on the per-night charts. Anchored to the wake date so
+        /// the tick lines up with "the morning after" reading habits — most
+        /// users think of a sleep as belonging to the day they woke up.
+        var dateLabel: String {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "en_US_POSIX")
+            f.timeZone = local.timeZone
+            f.dateFormat = "yyyy-MM-dd"
+            return f.string(from: end)
+        }
+    }
+
+    private static func loadSleepNights(
+        db: Database, deviceID: Int, window: ChartWindow
+    ) throws -> [SleepNight] {
+        let rows: [Row]
+        if window.interval == .all {
+            rows = try db.query(Queries.sleepNightsAll, bind: [.int(Int64(deviceID))])
+        } else {
+            rows = try db.query(
+                Queries.sleepNightsWindowed,
+                bind: [
+                    .int(Int64(deviceID)),
+                    .text(window.startTimestampISO),
+                    .text(window.endTimestampISO),
+                ]
+            )
+        }
+        var nights: [SleepNight] = []
+        for row in rows {
+            guard
+                let s = row.string("start_utc"),
+                let e = row.string("end_utc"),
+                let sd = Database.iso8601.date(from: s),
+                let ed = Database.iso8601.date(from: e)
+            else { continue }
+            nights.append(SleepNight(
+                id: row.int("sleep_id") ?? 0,
+                start: sd, end: ed,
+                local: DateUtil.localCalendar(offsetSeconds: row.int("local_offset_s")),
+                durationS: row.int("duration_s") ?? 0,
+                score: row.int("sleep_score"),
+                deepS: row.int("deep_s") ?? 0,
+                lightS: row.int("light_s") ?? 0,
+                remS: row.int("rem_s") ?? 0,
+                awakeS: row.int("awake_s") ?? 0
+            ))
+        }
+        return nights
+    }
+
+    static let sleepScoreTrendDefaultInterval: ChartInterval = .month
+    static let sleepScoreTrendIntervals: [ChartInterval] = [.month, .year, .all]
+
+    public static func sleepScoreTrend(
+        from db: Database,
+        deviceID: Int
+    ) throws -> [String: Any] {
+        let chartID = "sleep-score-trend"
+        let window = ChartWindowStore.shared.window(
+            for: chartID, defaultInterval: sleepScoreTrendDefaultInterval
+        )
+        let dataRange = dataDateRange(db, sql: """
+            SELECT MIN(start_utc) AS date_min, MAX(end_utc) AS date_max FROM sleep_sessions
+            WHERE device_id = ? AND sleep_score IS NOT NULL
+            """, bind: [.int(Int64(deviceID))])
+        let nights = try loadSleepNights(db: db, deviceID: deviceID, window: window)
+            .filter { $0.score != nil }
+        guard !nights.isEmpty else {
+            var payload = emptyPayload(chartID: chartID, message: "No sleep scores in this window")
+            payload["window"] = windowControlsPayload(
+                window: window, intervals: sleepScoreTrendIntervals, dataRange: dataRange
+            )
+            return payload
+        }
+
+        let xs = nights.map { $0.dateLabel }
+        let ys: [Any] = nights.map { Double($0.score!) }
+        // 7-day rolling mean over the score series.
+        var rolling: [Any] = []
+        let scores = nights.map { Double($0.score!) }
+        for i in 0..<scores.count {
+            let lo = max(0, i - 6)
+            let slice = Array(scores[lo...i])
+            rolling.append(slice.reduce(0, +) / Double(slice.count))
+        }
+
+        let pointTrace: [String: Any] = [
+            "type": "scatter", "mode": "markers",
+            "x": xs, "y": ys, "name": "nightly",
+            "marker": ["color": "#888888", "size": 6],
+            "hovertemplate": "%{x}<br>score %{y:.0f}<extra></extra>",
+        ]
+        let smoothTrace: [String: Any] = [
+            "type": "scatter", "mode": "lines",
+            "x": xs, "y": rolling, "name": "7-day mean",
+            "line": ["color": "#4ec9b0", "width": 2],
+            "hovertemplate": "%{x}<br>%{y:.1f} avg<extra></extra>",
+        ]
+
+        var layout = darkLayout(title: "Sleep score", height: 280)
+        layout["showlegend"] = true
+        layout["legend"] = topHorizontalLegend
+        var xaxis = layout["xaxis"] as! [String: Any]
+        xaxis["type"] = "category"
+        xaxis["tickfont"] = ["color": "#888888", "size": 9]
+        xaxis["nticks"] = 8
+        layout["xaxis"] = xaxis
+        var yaxis = layout["yaxis"] as! [String: Any]
+        yaxis["range"] = [0, 100]
+        yaxis["tickvals"] = [0, 50, 70, 85, 100]
+        layout["yaxis"] = yaxis
+        // Reference lines at the conventional "fair" (70) and "good" (85)
+        // thresholds so the user can read quality at a glance.
+        layout["shapes"] = [
+            [
+                "type": "line", "xref": "paper",
+                "x0": 0, "x1": 1, "y0": 70, "y1": 70,
+                "line": ["color": "#888888", "width": 1, "dash": "dash"],
+            ] as [String: Any],
+            [
+                "type": "line", "xref": "paper",
+                "x0": 0, "x1": 1, "y0": 85, "y1": 85,
+                "line": ["color": "#4ec9b0", "width": 1, "dash": "dot"],
+            ] as [String: Any],
+        ]
+        layout["annotations"] = [
+            [
+                "xref": "paper", "x": 1.0, "xanchor": "right",
+                "y": 70, "yanchor": "bottom",
+                "text": "fair", "showarrow": false,
+                "font": ["color": "#888888", "size": 9],
+            ] as [String: Any],
+            [
+                "xref": "paper", "x": 1.0, "xanchor": "right",
+                "y": 85, "yanchor": "bottom",
+                "text": "good", "showarrow": false,
+                "font": ["color": "#4ec9b0", "size": 9],
+            ] as [String: Any],
+        ]
+
+        return [
+            "chart": chartID,
+            "data": [pointTrace, smoothTrace],
+            "layout": layout,
+            "config": defaultConfig,
+            "window": windowControlsPayload(
+                window: window, intervals: sleepScoreTrendIntervals, dataRange: dataRange
+            ),
+        ]
+    }
+
+    static let sleepDurationBarDefaultInterval: ChartInterval = .month
+    static let sleepDurationBarIntervals: [ChartInterval] = [.month, .year, .all]
+
+    public static func sleepDurationBar(
+        from db: Database,
+        deviceID: Int
+    ) throws -> [String: Any] {
+        let chartID = "sleep-duration-bar"
+        let window = ChartWindowStore.shared.window(
+            for: chartID, defaultInterval: sleepDurationBarDefaultInterval
+        )
+        let dataRange = dataDateRange(db, sql: """
+            SELECT MIN(start_utc) AS date_min, MAX(end_utc) AS date_max FROM sleep_sessions
+            WHERE device_id = ?
+            """, bind: [.int(Int64(deviceID))])
+        let nights = try loadSleepNights(db: db, deviceID: deviceID, window: window)
+        guard !nights.isEmpty else {
+            var payload = emptyPayload(chartID: chartID, message: "No sleep data in this window")
+            payload["window"] = windowControlsPayload(
+                window: window, intervals: sleepDurationBarIntervals, dataRange: dataRange
+            )
+            return payload
+        }
+
+        let xs = nights.map { $0.dateLabel }
+        let hours = nights.map { Double($0.deepS + $0.lightS + $0.remS) / 3600.0 }
+        // Bar tint by score: fade from gray to teal across the score range.
+        let colors: [String] = nights.map { n in
+            guard let s = n.score else { return "#555555" }
+            // 50→#3a3a3c, 75→#4ec9b0; clamp.
+            let t = max(0.0, min(1.0, (Double(s) - 50.0) / 35.0))
+            return blendColor(from: "#3a3a3c", to: "#4ec9b0", t: t)
+        }
+
+        let trace: [String: Any] = [
+            "type": "bar",
+            "x": xs, "y": hours,
+            "marker": ["color": colors],
+            "hovertemplate": "%{x}<br>%{y:.1f} h<extra></extra>",
+        ]
+
+        var layout = darkLayout(title: "Sleep duration", height: 280)
+        layout["shapes"] = [[
+            "type": "line", "xref": "paper",
+            "x0": 0, "x1": 1, "y0": 8.0, "y1": 8.0,
+            "line": ["color": "#888888", "width": 1, "dash": "dash"],
+        ] as [String: Any]]
+        layout["annotations"] = [[
+            "xref": "paper", "x": 1.0, "xanchor": "right",
+            "y": 8.0, "yanchor": "bottom",
+            "text": "8h goal", "showarrow": false,
+            "font": ["color": "#888888", "size": 10],
+        ] as [String: Any]]
+        var xaxis = layout["xaxis"] as! [String: Any]
+        xaxis["type"] = "category"
+        xaxis["tickfont"] = ["color": "#888888", "size": 9]
+        xaxis["nticks"] = 8
+        layout["xaxis"] = xaxis
+        var yaxis = layout["yaxis"] as! [String: Any]
+        yaxis["title"] = ["text": "hours", "font": ["color": "#888888", "size": 10]]
+        yaxis["rangemode"] = "tozero"
+        layout["yaxis"] = yaxis
+        layout["bargap"] = 0.25
+
+        return [
+            "chart": chartID,
+            "data": [trace],
+            "layout": layout,
+            "config": defaultConfig,
+            "window": windowControlsPayload(
+                window: window, intervals: sleepDurationBarIntervals, dataRange: dataRange
+            ),
+        ]
+    }
+
+    static let sleepStageStackedDefaultInterval: ChartInterval = .month
+    static let sleepStageStackedIntervals: [ChartInterval] = [.week, .month, .year, .all]
+
+    public static func sleepStageStacked(
+        from db: Database,
+        deviceID: Int
+    ) throws -> [String: Any] {
+        let chartID = "sleep-stage-stacked"
+        let window = ChartWindowStore.shared.window(
+            for: chartID, defaultInterval: sleepStageStackedDefaultInterval
+        )
+        let dataRange = dataDateRange(db, sql: """
+            SELECT MIN(start_utc) AS date_min, MAX(end_utc) AS date_max FROM sleep_sessions
+            WHERE device_id = ?
+            """, bind: [.int(Int64(deviceID))])
+        let nights = try loadSleepNights(db: db, deviceID: deviceID, window: window)
+        guard !nights.isEmpty else {
+            var payload = emptyPayload(chartID: chartID, message: "No sleep data in this window")
+            payload["window"] = windowControlsPayload(
+                window: window, intervals: sleepStageStackedIntervals, dataRange: dataRange
+            )
+            return payload
+        }
+
+        let xs = nights.map { $0.dateLabel }
+        let deepHrs = nights.map { Double($0.deepS) / 3600.0 }
+        let lightHrs = nights.map { Double($0.lightS) / 3600.0 }
+        let remHrs = nights.map { Double($0.remS) / 3600.0 }
+        let awakeHrs = nights.map { Double($0.awakeS) / 3600.0 }
+
+        let traces: [[String: Any]] = [
+            [
+                "type": "bar", "x": xs, "y": deepHrs,
+                "name": "Deep",
+                "marker": ["color": "#4ec9b0"],
+                "hovertemplate": "%{x}<br>Deep %{y:.2f} h<extra></extra>",
+            ],
+            [
+                "type": "bar", "x": xs, "y": lightHrs,
+                "name": "Light",
+                "marker": ["color": "#569cd6"],
+                "hovertemplate": "%{x}<br>Light %{y:.2f} h<extra></extra>",
+            ],
+            [
+                "type": "bar", "x": xs, "y": remHrs,
+                "name": "REM",
+                "marker": ["color": "#c586c0"],
+                "hovertemplate": "%{x}<br>REM %{y:.2f} h<extra></extra>",
+            ],
+            [
+                "type": "bar", "x": xs, "y": awakeHrs,
+                "name": "Awake",
+                "marker": ["color": "#f48771"],
+                "hovertemplate": "%{x}<br>Awake %{y:.2f} h<extra></extra>",
+            ],
+        ]
+
+        var layout = darkLayout(title: "Stage distribution", height: 280)
+        layout["barmode"] = "stack"
+        layout["showlegend"] = true
+        layout["legend"] = topHorizontalLegend
+        var xaxis = layout["xaxis"] as! [String: Any]
+        xaxis["type"] = "category"
+        xaxis["tickfont"] = ["color": "#888888", "size": 9]
+        xaxis["nticks"] = 8
+        layout["xaxis"] = xaxis
+        var yaxis = layout["yaxis"] as! [String: Any]
+        yaxis["title"] = ["text": "hours", "font": ["color": "#888888", "size": 10]]
+        yaxis["rangemode"] = "tozero"
+        layout["yaxis"] = yaxis
+        layout["bargap"] = 0.2
+
+        return [
+            "chart": chartID,
+            "data": traces,
+            "layout": layout,
+            "config": defaultConfig,
+            "window": windowControlsPayload(
+                window: window, intervals: sleepStageStackedIntervals, dataRange: dataRange
+            ),
+        ]
+    }
+
+    static let sleepBedWakeScatterDefaultInterval: ChartInterval = .month
+    static let sleepBedWakeScatterIntervals: [ChartInterval] = [.month, .year, .all]
+
+    public static func sleepBedWakeScatter(
+        from db: Database,
+        deviceID: Int
+    ) throws -> [String: Any] {
+        let chartID = "sleep-bed-wake-scatter"
+        let window = ChartWindowStore.shared.window(
+            for: chartID, defaultInterval: sleepBedWakeScatterDefaultInterval
+        )
+        let dataRange = dataDateRange(db, sql: """
+            SELECT MIN(start_utc) AS date_min, MAX(end_utc) AS date_max FROM sleep_sessions
+            WHERE device_id = ?
+            """, bind: [.int(Int64(deviceID))])
+        let nights = try loadSleepNights(db: db, deviceID: deviceID, window: window)
+        guard !nights.isEmpty else {
+            var payload = emptyPayload(chartID: chartID, message: "No sleep data in this window")
+            payload["window"] = windowControlsPayload(
+                window: window, intervals: sleepBedWakeScatterIntervals, dataRange: dataRange
+            )
+            return payload
+        }
+
+        // Convert each session's bed/wake time to "hours past noon" so a
+        // bedtime at 11pm is +11 and 1am rolls over to +13. Wake times are
+        // computed as bed + duration so they stay on the same continuous
+        // axis (avoiding the "wraps to next day" gotcha).
+        var xs: [String] = []
+        var bedYs: [Double] = []
+        var wakeYs: [Double] = []
+        for n in nights {
+            xs.append(n.dateLabel)
+            let bedHour = hoursPastNoon(date: n.start, calendar: n.local)
+            let durationH = Double(n.deepS + n.lightS + n.remS + n.awakeS) / 3600.0
+            bedYs.append(bedHour)
+            wakeYs.append(bedHour + durationH)
+        }
+
+        let bedTrace: [String: Any] = [
+            "type": "scatter", "mode": "markers",
+            "x": xs, "y": bedYs,
+            "name": "bed",
+            "marker": ["color": "#569cd6", "size": 7, "symbol": "circle"],
+            "hovertemplate": "%{x}<br>bed %{customdata}<extra></extra>",
+            "customdata": bedYs.map { hourLabel($0) },
+        ]
+        let wakeTrace: [String: Any] = [
+            "type": "scatter", "mode": "markers",
+            "x": xs, "y": wakeYs,
+            "name": "wake",
+            "marker": ["color": "#d7ba7d", "size": 7, "symbol": "circle"],
+            "hovertemplate": "%{x}<br>wake %{customdata}<extra></extra>",
+            "customdata": wakeYs.map { hourLabel($0) },
+        ]
+
+        var layout = darkLayout(title: "Bed & wake times", height: 280)
+        layout["showlegend"] = true
+        layout["legend"] = topHorizontalLegend
+        var xaxis = layout["xaxis"] as! [String: Any]
+        xaxis["type"] = "category"
+        xaxis["tickfont"] = ["color": "#888888", "size": 9]
+        xaxis["nticks"] = 8
+        layout["xaxis"] = xaxis
+        // Y axis is "hours past noon" so bedtime (e.g. 11 PM = 11) and wake
+        // (e.g. 6 AM next-day = 18) live on the same continuous axis. Reverse
+        // the axis so later wall-clock times render LOWER on the chart —
+        // which matches reading order: evening bedtime at top, next-morning
+        // wake at the bottom.
+        var yaxis = layout["yaxis"] as! [String: Any]
+        yaxis["autorange"] = "reversed"
+        let ticks = Array(stride(from: -2, through: 14, by: 2))
+        yaxis["tickvals"] = ticks.map { Double($0) }
+        yaxis["ticktext"] = ticks.map { hourLabel(Double($0)) }
+        layout["yaxis"] = yaxis
+
+        return [
+            "chart": chartID,
+            "data": [bedTrace, wakeTrace],
+            "layout": layout,
+            "config": defaultConfig,
+            "window": windowControlsPayload(
+                window: window, intervals: sleepBedWakeScatterIntervals, dataRange: dataRange
+            ),
+        ]
+    }
+
+    /// Hours offset from local-noon for an absolute date. A bedtime of 11 PM
+    /// returns 11.0; a 1 AM bedtime returns 13.0 (continuous past midnight).
+    /// Wake times are then computed as bed + duration so they're on the same
+    /// axis without a discontinuity at midnight.
+    private static func hoursPastNoon(date: Date, calendar: Calendar) -> Double {
+        let comps = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        guard let h = comps.hour, let m = comps.minute else { return 0 }
+        let total = Double(h) + Double(m) / 60.0
+        // 0..12 = treat as next-day wrap (add 24-12=12 to keep continuous).
+        // 12..24 = same evening (subtract 12).
+        return total < 12 ? total + 12 : total - 12
+    }
+
+    /// Convert "hours past noon" back to a 12h clock label like "11 PM" or
+    /// "5:30 AM". Used as both Y tick label and hover customdata.
+    private static func hourLabel(_ hoursPastNoon: Double) -> String {
+        // Normalize back to 0..24 wall-clock hours.
+        var h24 = hoursPastNoon + 12.0
+        while h24 < 0 { h24 += 24 }
+        while h24 >= 24 { h24 -= 24 }
+        let totalMin = Int((h24 * 60.0).rounded())
+        let h = totalMin / 60
+        let m = totalMin % 60
+        let ampm = h >= 12 ? "PM" : "AM"
+        let h12 = h == 0 ? 12 : (h > 12 ? h - 12 : h)
+        if m == 0 {
+            return "\(h12) \(ampm)"
+        }
+        return String(format: "%d:%02d %@", h12, m, ampm)
+    }
+
+    /// Linearly interpolate between two hex colors. `t=0` returns `from`,
+    /// `t=1` returns `to`. Used for score-tinted bars.
+    private static func blendColor(from: String, to: String, t: Double) -> String {
+        let a = parseHex(from), b = parseHex(to)
+        let r = Int((Double(a.r) * (1 - t) + Double(b.r) * t).rounded())
+        let g = Int((Double(a.g) * (1 - t) + Double(b.g) * t).rounded())
+        let bl = Int((Double(a.b) * (1 - t) + Double(b.b) * t).rounded())
+        return String(format: "#%02x%02x%02x", r, g, bl)
+    }
+
+    private static func parseHex(_ hex: String) -> (r: Int, g: Int, b: Int) {
+        var s = hex
+        if s.hasPrefix("#") { s.removeFirst() }
+        guard s.count == 6, let v = Int(s, radix: 16) else { return (0, 0, 0) }
+        return ((v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff)
     }
 
     // MARK: - Sync / runs table + summary banner

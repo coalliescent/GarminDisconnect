@@ -39,30 +39,54 @@ enum TabLoaders {
     /// Build the insight-cards payload from InsightEngine. Separate from the
     /// other Overview charts because it has its own caching layer.
     static func loadOverviewInsights(db: Database, deviceID: Int) -> [String: Any] {
-        let insights = InsightEngine.compute(db: db, deviceID: deviceID)
-        return [
-            "chart": "insight-cards",
-            "insights": insights.map { i -> [String: Any] in
-                return [
-                    "title": i.title,
-                    "value": i.primaryValue,
-                    "sub": i.secondaryValue ?? "",
-                    "direction": i.direction.rawValue,
-                    "severity": i.severity.rawValue,
-                ]
-            },
-        ]
+        let insights = InsightEngine.computeOverview(db: db, deviceID: deviceID)
+        return insightsPayload(containerID: "overview-insights", insights: insights)
     }
 
     /// Build payloads for the Activities tab. The weekly-distance-bar chart
     /// lives on the Overview tab now; the Activities tab is just the
     /// sidebar list + selected-activity detail.
-    static func loadActivities(db: Database, deviceID: Int) -> [[String: Any]] {
+    ///
+    /// `selectedActivityID` is forwarded to the JS list renderer so the row
+    /// matching the currently-selected activity carries the `.selected`
+    /// class on first paint (without it the auto-selected default activity
+    /// would have no visual indicator in the sidebar).
+    static func loadActivities(
+        db: Database,
+        deviceID: Int,
+        selectedActivityID: Int? = nil
+    ) -> [[String: Any]] {
         return [
             tryEncode(chart: "activity-list") {
-                try PlotlyEncoder.activityListPayload(from: db, deviceID: deviceID)
+                try PlotlyEncoder.activityListPayload(
+                    from: db, deviceID: deviceID,
+                    selectedActivityID: selectedActivityID
+                )
             },
         ]
+    }
+
+    /// Most recent activity for the device, by start time. Returns nil if
+    /// the device has no activities. Used by MainWindowController to pick
+    /// a default selection on first activities-tab visit.
+    static func mostRecentActivityID(db: Database, deviceID: Int) -> Int? {
+        do {
+            let row = try db.queryOne("""
+                SELECT activity_id FROM activities
+                WHERE device_id = ?
+                ORDER BY start_time_utc DESC
+                LIMIT 1
+                """, bind: [.int(Int64(deviceID))])
+            return row?.int("activity_id")
+        } catch {
+            return nil
+        }
+    }
+
+    /// Insight strip for the Activities tab.
+    static func loadActivitiesInsights(db: Database, deviceID: Int) -> [String: Any] {
+        let insights = InsightEngine.computeActivities(db: db, deviceID: deviceID)
+        return insightsPayload(containerID: "activities-insights", insights: insights)
     }
 
     /// Build payloads for the activity-detail sub-section. Called when the
@@ -74,6 +98,9 @@ enum TabLoaders {
     static func loadActivityDetail(db: Database, activityID: Int) -> [[String: Any]] {
         let trim = resolveActivityTrim(db: db, activityID: activityID)
         return [
+            tryEncode(chart: "activity-summary-card") {
+                try PlotlyEncoder.activitySummaryCard(from: db, activityID: activityID, trim: trim)
+            },
             tryEncode(chart: "activity-pace-altitude") {
                 try PlotlyEncoder.activityPaceAltitude(from: db, activityID: activityID, trim: trim)
             },
@@ -124,13 +151,31 @@ enum TabLoaders {
             tryEncode(chart: "stress-body-battery-ts") {
                 try PlotlyEncoder.stressBodyBatteryTS(from: db, deviceID: deviceID)
             },
+            tryEncode(chart: "hrv-daily-trend") {
+                try PlotlyEncoder.hrvDailyTrend(from: db, deviceID: deviceID)
+            },
+            tryEncode(chart: "hr-range-band") {
+                try PlotlyEncoder.hrRangeBand(from: db, deviceID: deviceID)
+            },
+            tryEncode(chart: "daily-steps-distance-combo") {
+                try PlotlyEncoder.dailyStepsDistanceCombo(from: db, deviceID: deviceID)
+            },
             tryEncode(chart: "daily-intensity-minutes-bar") {
                 try PlotlyEncoder.dailyIntensityMinutesBar(from: db, deviceID: deviceID)
             },
             tryEncode(chart: "steps-hourly-heatmap") {
                 try PlotlyEncoder.hourlyHRHeatmap(from: db, deviceID: deviceID)
             },
+            tryEncode(chart: "respiration-spo2-ts") {
+                try PlotlyEncoder.respirationSpo2TS(from: db, deviceID: deviceID)
+            },
         ]
+    }
+
+    /// Insight strip for Wellness (parallel to loadOverviewInsights).
+    static func loadWellnessInsights(db: Database, deviceID: Int) -> [String: Any] {
+        let insights = InsightEngine.computeWellness(db: db, deviceID: deviceID)
+        return insightsPayload(containerID: "wellness-insights", insights: insights)
     }
 
     /// Build payloads for the Sleep tab.
@@ -139,8 +184,69 @@ enum TabLoaders {
             tryEncode(chart: "sleep-hypnogram") {
                 try PlotlyEncoder.sleepHypnogram(from: db, deviceID: deviceID)
             },
+            tryEncode(chart: "sleep-stage-donut") {
+                try PlotlyEncoder.sleepStageDonut(from: db, deviceID: deviceID)
+            },
+            tryEncode(chart: "sleep-summary-card") {
+                try PlotlyEncoder.sleepSummaryCard(from: db, deviceID: deviceID)
+            },
+            tryEncode(chart: "sleep-score-trend") {
+                try PlotlyEncoder.sleepScoreTrend(from: db, deviceID: deviceID)
+            },
+            tryEncode(chart: "sleep-duration-bar") {
+                try PlotlyEncoder.sleepDurationBar(from: db, deviceID: deviceID)
+            },
+            tryEncode(chart: "sleep-stage-stacked") {
+                try PlotlyEncoder.sleepStageStacked(from: db, deviceID: deviceID)
+            },
+            tryEncode(chart: "sleep-bed-wake-scatter") {
+                try PlotlyEncoder.sleepBedWakeScatter(from: db, deviceID: deviceID)
+            },
             tryEncode(chart: "sleep-regularity-heatmap") {
                 try PlotlyEncoder.sleepRegularityHeatmap(from: db, deviceID: deviceID)
+            },
+        ]
+    }
+
+    /// Insight strip for Sleep.
+    static func loadSleepInsights(db: Database, deviceID: Int) -> [String: Any] {
+        let insights = InsightEngine.computeSleep(db: db, deviceID: deviceID)
+        return insightsPayload(containerID: "sleep-insights", insights: insights)
+    }
+
+    /// Click-to-load: rebuild just the hero (hypnogram + donut + summary)
+    /// for a specific sleep_id. Returns three payloads ready to ship to the
+    /// WebChartView.
+    static func loadSleepNight(db: Database, sleepID: Int) -> [[String: Any]] {
+        return [
+            tryEncode(chart: "sleep-hypnogram") {
+                try PlotlyEncoder.sleepHypnogramFor(from: db, sleepID: sleepID)
+            },
+            tryEncode(chart: "sleep-stage-donut") {
+                try PlotlyEncoder.sleepStageDonutFor(from: db, sleepID: sleepID)
+            },
+            tryEncode(chart: "sleep-summary-card") {
+                try PlotlyEncoder.sleepSummaryCardFor(from: db, sleepID: sleepID)
+            },
+        ]
+    }
+
+    /// Shared shape for the per-tab insight payloads. `containerID` is the
+    /// HTML id of the insight-grid div the JS renderer will append cards into.
+    private static func insightsPayload(
+        containerID: String, insights: [Insight]
+    ) -> [String: Any] {
+        return [
+            "chart": "insight-cards",
+            "container": containerID,
+            "insights": insights.map { i -> [String: Any] in
+                return [
+                    "title": i.title,
+                    "value": i.primaryValue,
+                    "sub": i.secondaryValue ?? "",
+                    "direction": i.direction.rawValue,
+                    "severity": i.severity.rawValue,
+                ]
             },
         ]
     }

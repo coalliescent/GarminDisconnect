@@ -159,14 +159,27 @@ final class MainWindowController: NSWindowController, WebChartViewDelegate {
             webChartView.render(TabLoaders.loadOverviewInsights(db: db, deviceID: deviceID))
             webChartView.render(TabLoaders.loadOverview(db: db, deviceID: deviceID))
         case .activities:
-            webChartView.render(TabLoaders.loadActivities(db: db, deviceID: deviceID))
-            // Re-render the previously selected activity if any.
+            // Default to the most recent activity if the user hasn't picked
+            // one yet. Lets the right pane show real content on first visit
+            // instead of just the insight strip + an empty detail section.
+            if selectedActivityID == nil {
+                selectedActivityID = TabLoaders.mostRecentActivityID(
+                    db: db, deviceID: deviceID
+                )
+            }
+            webChartView.render(TabLoaders.loadActivitiesInsights(db: db, deviceID: deviceID))
+            webChartView.render(TabLoaders.loadActivities(
+                db: db, deviceID: deviceID,
+                selectedActivityID: selectedActivityID
+            ))
             if let aid = selectedActivityID {
                 webChartView.render(TabLoaders.loadActivityDetail(db: db, activityID: aid))
             }
         case .wellness:
+            webChartView.render(TabLoaders.loadWellnessInsights(db: db, deviceID: deviceID))
             webChartView.render(TabLoaders.loadWellness(db: db, deviceID: deviceID))
         case .sleep:
+            webChartView.render(TabLoaders.loadSleepInsights(db: db, deviceID: deviceID))
             webChartView.render(TabLoaders.loadSleep(db: db, deviceID: deviceID))
         case .sync:
             webChartView.render(
@@ -327,10 +340,36 @@ final class MainWindowController: NSWindowController, WebChartViewDelegate {
         case "renderError":
             print("WebChartView: render error: \(payload["error"] ?? "<unknown>")")
         case "chartClicked":
-            print("WebChartView: chart click \(payload)")
+            handleChartClicked(payload)
+        case "sleepNightSelected":
+            handleSleepNightSelected(payload)
         default:
             print("WebChartView: unhandled event \(event)")
         }
+    }
+
+    /// Plotly click events are routed here. The sleep regularity heatmap
+    /// carries a `customdata` of sleep_id per cell so the user can click
+    /// any night in the grid to load its hero detail. Other charts can be
+    /// added here as their click semantics are defined.
+    private func handleChartClicked(_ payload: [String: Any]) {
+        let chartID = payload["chart"] as? String ?? ""
+        if chartID == "sleep-regularity-heatmap" {
+            handleSleepNightSelected(payload)
+        }
+    }
+
+    /// User clicked a cell in the sleep regularity heatmap. The cell carries
+    /// `customdata` = sleep_id; reload the hero (hypnogram + donut + summary)
+    /// for that night.
+    private func handleSleepNightSelected(_ payload: [String: Any]) {
+        let raw = payload["customdata"] ?? payload["sleep_id"] ?? NSNull()
+        var sleepID: Int?
+        if let n = raw as? Int { sleepID = n }
+        else if let d = raw as? Double { sleepID = Int(d) }
+        else if let s = raw as? String { sleepID = Int(s) }
+        guard let sleepID = sleepID, let db = AppState.shared.database else { return }
+        webChartView.render(TabLoaders.loadSleepNight(db: db, sleepID: sleepID))
     }
 
     /// User picked a new interval (Day/Week/Month/Year/All) on a chart's
@@ -444,6 +483,22 @@ final class MainWindowController: NSWindowController, WebChartViewDelegate {
                 payload = try PlotlyEncoder.dailyIntensityMinutesBar(from: db, deviceID: deviceID)
             case "steps-hourly-heatmap":
                 payload = try PlotlyEncoder.hourlyHRHeatmap(from: db, deviceID: deviceID)
+            case "hrv-daily-trend":
+                payload = try PlotlyEncoder.hrvDailyTrend(from: db, deviceID: deviceID)
+            case "hr-range-band":
+                payload = try PlotlyEncoder.hrRangeBand(from: db, deviceID: deviceID)
+            case "daily-steps-distance-combo":
+                payload = try PlotlyEncoder.dailyStepsDistanceCombo(from: db, deviceID: deviceID)
+            case "respiration-spo2-ts":
+                payload = try PlotlyEncoder.respirationSpo2TS(from: db, deviceID: deviceID)
+            case "sleep-score-trend":
+                payload = try PlotlyEncoder.sleepScoreTrend(from: db, deviceID: deviceID)
+            case "sleep-duration-bar":
+                payload = try PlotlyEncoder.sleepDurationBar(from: db, deviceID: deviceID)
+            case "sleep-stage-stacked":
+                payload = try PlotlyEncoder.sleepStageStacked(from: db, deviceID: deviceID)
+            case "sleep-bed-wake-scatter":
+                payload = try PlotlyEncoder.sleepBedWakeScatter(from: db, deviceID: deviceID)
             case "sleep-regularity-heatmap":
                 payload = try PlotlyEncoder.sleepRegularityHeatmap(from: db, deviceID: deviceID)
             default:

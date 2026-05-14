@@ -157,7 +157,7 @@ main#content {
     letter-spacing: 0.6px;
 }
 
-/* ---- Insight cards (Overview) ---- */
+/* ---- Insight cards (Overview / Wellness / Sleep) ---- */
 .insight-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -168,6 +168,14 @@ main#content {
     background: var(--bg-alt);
     border-radius: 8px;
     padding: 14px 16px 12px;
+    /* Subtle lift on hover keeps the strip feeling alive without being
+     * noisy. Translate is GPU-cheap; border-color shift is the main visual
+     * cue for "interactive". */
+    transition: transform 0.12s ease, border-color 0.12s ease;
+    border-left: 3px solid transparent;
+}
+.insight-card:hover {
+    transform: translateY(-1px);
 }
 .insight-card .card-title {
     color: var(--fg-dim);
@@ -181,11 +189,15 @@ main#content {
     font-weight: 500;
     margin-top: 6px;
     line-height: 1.1;
+    /* Tabular numerics so digit widths stay constant — the strip reads as a
+     * stable grid when values change instead of jiggling left/right. */
+    font-variant-numeric: tabular-nums;
 }
 .insight-card .card-sub {
     color: var(--fg-dim);
     font-size: 11px;
     margin-top: 4px;
+    font-variant-numeric: tabular-nums;
 }
 .insight-card .card-arrow {
     display: inline-block;
@@ -194,8 +206,126 @@ main#content {
 .insight-card.up    .card-arrow { color: var(--accent); }
 .insight-card.down  .card-arrow { color: var(--bad); }
 .insight-card.flat  .card-arrow { color: var(--fg-faint); }
-.insight-card.positive  { border-left: 3px solid var(--accent); }
-.insight-card.negative  { border-left: 3px solid var(--bad); }
+.insight-card.positive  { border-left-color: var(--accent); }
+.insight-card.negative  { border-left-color: var(--bad); }
+
+/* ---- Activity summary card ----
+ *
+ * Horizontal stat band shown above the activity-detail charts. The left
+ * panel holds the sport title + date; the right panel is a flowing grid of
+ * stat tiles (label + value). Mirrors the sleep summary card's tabular
+ * numerics + uppercase-label aesthetic so the two panes feel related.
+ */
+.activity-summary-card {
+    background: var(--bg-alt);
+    border-radius: 8px;
+    padding: 16px 22px 14px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 22px;
+}
+.activity-summary-card .summary-head {
+    flex: 0 0 auto;
+    min-width: 200px;
+}
+.activity-summary-card .summary-head-title {
+    color: var(--fg);
+    font-size: 18px;
+    font-weight: 500;
+    text-transform: capitalize;
+    line-height: 1.15;
+}
+.activity-summary-card .summary-head-sub {
+    color: var(--fg-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-top: 4px;
+}
+.activity-summary-card .summary-stats {
+    flex: 1 1 auto;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 10px 18px;
+    align-items: baseline;
+}
+.activity-summary-card .stat-label {
+    color: var(--fg-dim);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.activity-summary-card .stat-value {
+    color: var(--fg);
+    font-size: 16px;
+    font-weight: 500;
+    margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ---- Sleep hero card ----
+ *
+ * Three-pane flex row: hypnogram (1.6fr, the visual centerpiece), donut
+ * (.8fr, shows stage proportions), summary (.7fr, a labels/values list).
+ * Each child sits in its own .chart-slot or .sleep-hero-summary so the
+ * existing chart-id render dispatch keeps working without special cases.
+ *
+ * On narrow windows the row wraps to a column to avoid squashing.
+ */
+.sleep-hero {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+.sleep-hero-hypnogram {
+    flex: 1.6 1 360px;
+    min-height: 280px;
+}
+.sleep-hero-donut {
+    flex: 0.8 1 240px;
+    min-height: 280px;
+}
+.sleep-hero-summary {
+    flex: 0.7 1 220px;
+    min-height: 280px;
+    background: var(--bg-alt);
+    border-radius: 8px;
+    padding: 18px 22px;
+    color: var(--fg);
+    display: flex;
+    flex-direction: column;
+}
+.sleep-hero-summary .summary-title {
+    color: var(--fg-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-bottom: 10px;
+}
+.sleep-hero-summary .summary-rows {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 6px 14px;
+    align-items: baseline;
+    flex: 1;
+    align-content: start;
+}
+.sleep-hero-summary .summary-label {
+    color: var(--fg-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+.sleep-hero-summary .summary-value {
+    color: var(--fg);
+    font-size: 14px;
+    font-weight: 500;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
 
 /* ---- Activities tab sidebar layout ----
  * Two-column grid: a fixed-width sidebar on the left holds the activity
@@ -332,7 +462,7 @@ main#content {
 .sync-runs-table td {
     color: var(--fg);
 }
-.sync-runs-table td.right { text-align: right; }
+.sync-runs-table .right { text-align: right; }
 .sync-runs-table tr.failed td { color: var(--bad); }
 
 /* ---- Empty-state placeholder ---- */

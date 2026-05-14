@@ -8,7 +8,7 @@
 ROOT      := $(shell pwd)
 BUILD_DIR := $(ROOT)/build
 
-.PHONY: all bundle run clean test test-dep help
+.PHONY: all bundle run clean test test-dep icon help
 
 all: bundle
 
@@ -16,6 +16,7 @@ help:
 	@echo "GarminDisconnect — make targets"
 	@echo "  make             build and stage GarminDisconnect.app"
 	@echo "  make run         build, stage, and open the bundle"
+	@echo "  make icon        regenerate Resources/AppIcon.icns from tools/make_icon.swift"
 	@echo "  make clean       rm -rf build/"
 	@echo "  make test        run viewer unit tests against Tests/fixtures/tiny.db"
 	@echo "  make test-dep    run garmin-dump's pytest suite"
@@ -36,6 +37,13 @@ clean:
 
 test:
 	@bash Tests/run_tests.sh
+
+# Regenerate the app icon. The script renders 🚲 over a dark gradient,
+# applies CICrystallize, and bundles every iconset size into AppIcon.icns.
+# The intermediate .iconset/ directory is left in place after the run for
+# inspection.
+icon:
+	@swift tools/make_icon.swift
 
 # garmin-dump's own pytest suite — separate concern from the viewer tests.
 # The venv is created by build.sh on first `make`; this target assumes it
