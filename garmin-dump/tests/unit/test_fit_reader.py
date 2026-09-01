@@ -4,6 +4,8 @@ These exercise the integer-keyed dispatch path that the sleep and monitoring
 parsers use to handle Garmin's undocumented `unknown_NNN` messages. They also
 serve as a regression guard: if a future fitdecode upgrade stops exposing
 `def_num` on unknown-message fields, these tests will catch it.
+
+Both fixtures are SYNTHETIC — see tests/fixtures/build_fit_fixtures.py.
 """
 
 from __future__ import annotations
@@ -65,7 +67,7 @@ def test_iter_messages_for_num_yields_only_matching() -> None:
         n = msg_num(msg)
         seen.add(n)
         assert n in {297, 227}
-    # Our chosen monitor fixture is the smallest one with both message types.
+    # The monitor fixture carries exactly these two message types (plus file_id).
     assert seen == {297, 227}, f"expected both 297 and 227, got {seen}"
 
 

@@ -74,6 +74,35 @@ https://github.com/garmin/fit-java-sdk/blob/main/src/main/java/com/garmin/fit/Sl
 | g=275.f0 (enum 0..4)    | (none — written to sleep_stages) | n/a                             |
 | g=346.f3                | (none — written to sleep_score)  | n/a                             |
 
+## Test fixtures are synthetic (2026-08-31)
+
+The parser tests run against two committed FIT files:
+
+```
+tests/fixtures/sleep_F5I94001.fit      273 / 275 x12 / 346 / 382
+tests/fixtures/monitor_M47N0648.FIT    227 x120 / 297 x120
+```
+
+Both are **generated, not captured** — real files off the watch carry a device
+serial and a night of the wearer's biometrics, and the repo's root
+`.gitignore` excludes `*.fit` / `*.FIT` so they can never be committed. The
+generator is committed instead:
+
+```sh
+python garmin-dump/tests/fixtures/build_fit_fixtures.py   # rewrites both, deterministically
+```
+
+The fixtures' *structure* is faithful — same global mesg nums, same field
+def_nums, same base types, same quirks (stress_level carries its timestamp on
+f1 rather than f253) — and that structure is what the tests pin down. Their
+*values* are invented. **Do not treat them as evidence when reverse-engineering
+field semantics**: they encode what we already believe, so correlating against
+them can only ever confirm it.
+
+The still-open 233 / 279 work below therefore needs a real archive
+(`~/garmin-archive/garmin.db` plus the raw files), which lives only on the
+wearer's machine.
+
 ## Verification
 
 After re-ingest, expected counts in `~/garmin-archive/garmin.db`:

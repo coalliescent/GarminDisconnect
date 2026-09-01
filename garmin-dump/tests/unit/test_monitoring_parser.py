@@ -1,10 +1,13 @@
 """Tests for the monitoring FIT parser's named-by-num pass.
 
-Verifies that ingest_monitoring against a real Instinct 3 monitor file
+Verifies that ingest_monitoring against an Instinct 3-shaped monitor file
 populates `wellness_samples` with the named messages we now decode
 (stress_level from g=227, respiration_rate from g=297) and that the daily
 rollup picks them up so wellness_daily.avg_stress / respiration_avg are
 non-NULL.
+
+The fixture is SYNTHETIC — see tests/fixtures/build_fit_fixtures.py. Structure
+is faithful; values are invented. Not ground truth for field semantics.
 """
 
 from __future__ import annotations
@@ -22,7 +25,7 @@ from garmin_dump.db.repo import (
 from garmin_dump.ingest.monitoring import ingest_monitoring
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures"
-MONITOR_FIXTURE = FIXTURES / "monitor_M47N0648.FIT"  # has 100+ valid stress + respiration samples
+MONITOR_FIXTURE = FIXTURES / "monitor_M47N0648.FIT"  # 120 stress + 120 respiration samples
 
 
 def _seed(db: Database) -> tuple[int, int]:
