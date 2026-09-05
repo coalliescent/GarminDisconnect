@@ -23,8 +23,10 @@ Pre-alpha. macOS Apple Silicon only. Read-only against `~/garmin-archive/garmin.
 garmindisconnect/
 ├── Sources/             AppKit + Swift code (the viewer itself)
 ├── Resources/web/       index.html, charts.js, vendored Plotly.js
+├── Resources/icon/      app icon artwork (SVG sources + rendered PNG ladder)
 ├── Tests/               unit tests + tiny.db fixture
 ├── Makefile             thin wrapper: `make`, `make run`, `make test`
+├── tools/make_icon.py   packages Resources/icon/png/ into Resources/AppIcon.icns
 ├── build.sh             all real build work (swiftc + stage bundle + embed pylib + launch)
 └── garmin-dump/         co-located Python dependency (the sync tool)
     ├── pyproject.toml

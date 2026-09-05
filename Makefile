@@ -8,7 +8,7 @@
 ROOT      := $(shell pwd)
 BUILD_DIR := $(ROOT)/build
 
-.PHONY: all bundle run clean test test-dep icon help
+.PHONY: all bundle run clean test test-dep icon test-icon help
 
 all: bundle
 
@@ -16,10 +16,11 @@ help:
 	@echo "GarminDisconnect — make targets"
 	@echo "  make             build and stage GarminDisconnect.app"
 	@echo "  make run         build, stage, and open the bundle"
-	@echo "  make icon        regenerate Resources/AppIcon.icns from tools/make_icon.swift"
+	@echo "  make icon        repackage Resources/AppIcon.icns from Resources/icon/png/"
 	@echo "  make clean       rm -rf build/"
 	@echo "  make test        run viewer unit tests against Tests/fixtures/tiny.db"
 	@echo "  make test-dep    run garmin-dump's pytest suite"
+	@echo "  make test-icon   run the icon assembler's tests (no macOS needed)"
 	@echo ""
 	@echo "build.sh installs garmin-dump/.venv automatically on first run."
 	@echo "libmtp is NOT installed automatically — 'brew install libmtp' if"
@@ -38,12 +39,19 @@ clean:
 test:
 	@bash Tests/run_tests.sh
 
-# Regenerate the app icon. The script renders 🚲 over a dark gradient,
-# applies CICrystallize, and bundles every iconset size into AppIcon.icns.
-# The intermediate .iconset/ directory is left in place after the run for
-# inspection.
+# Repackage the app icon. tools/make_icon.py writes the .icns container
+# directly from the PNG ladder in Resources/icon/png/ using nothing but the
+# standard library — no iconutil, no Swift, so it runs (and is tested) on any
+# machine, not just a Mac. See Resources/icon/README.md for the artwork's
+# provenance and how to re-render the PNGs from the SVG sources.
 icon:
-	@swift tools/make_icon.swift
+	@python3 tools/make_icon.py
+
+# The icon assembler's own tests. Pure stdlib Python; unlike `make test` these
+# do not need macOS. Also asserts the committed .icns is in sync with the
+# committed PNGs, i.e. that nobody forgot to run `make icon`.
+test-icon:
+	@python3 tools/test_make_icon.py
 
 # garmin-dump's own pytest suite — separate concern from the viewer tests.
 # The venv is created by build.sh on first `make`; this target assumes it

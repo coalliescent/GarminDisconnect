@@ -1,0 +1,93 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <clipPath id="sq"><rect x="0" y="0" width="512" height="512" rx="114" ry="114"/></clipPath>
+    <linearGradient id="ssky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"    stop-color="#2a1c58"/>
+      <stop offset="0.32" stop-color="#8f356e"/>
+      <stop offset="0.6"  stop-color="#ef6a4a"/>
+      <stop offset="0.85" stop-color="#ff9440"/>
+      <stop offset="1"    stop-color="#ffc255"/>
+    </linearGradient>
+    <radialGradient id="sglow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0"   stop-color="#ffe9a8" stop-opacity="0.95"/>
+      <stop offset="0.5" stop-color="#ffb85e" stop-opacity="0.4"/>
+      <stop offset="1"   stop-color="#ff8a5e" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="swater" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"   stop-color="#ffab55"/>
+      <stop offset="0.4" stop-color="#c2506a"/>
+      <stop offset="1"   stop-color="#3a2360"/>
+    </linearGradient>
+    <linearGradient id="shill" x1="0" y1="0" x2="0.2" y2="1">
+      <stop offset="0"   stop-color="#2f6a4a"/>
+      <stop offset="0.5" stop-color="#174233"/>
+      <stop offset="1"   stop-color="#0a231d"/>
+    </linearGradient>
+  </defs>
+  <g clip-path="url(#sq)">
+    <rect width="512" height="512" fill="url(#ssky)"/>
+
+    <!-- sun (large and high so the bike silhouettes against it at tiny sizes) -->
+    <ellipse cx="252" cy="216" rx="300" ry="250" fill="url(#sglow)"/>
+    <circle cx="240" cy="210" r="112" fill="#ffcf68"/>
+    <circle cx="238" cy="204" r="92" fill="#ffe694"/>
+    <circle cx="236" cy="198" r="66" fill="#fff8d6"/>
+
+    <!-- distant city -->
+    <path d="M0,262 L0,244 L34,244 L34,230 L58,230 L58,248 L92,248 L92,222 L110,222 L110,206 L126,206
+             L126,226 L148,226 L148,244 L196,244 L196,214 L214,214 L214,200 L228,200 L228,228 L252,228
+             L252,246 L292,246 L292,232 L318,232 L318,250 L360,250 L360,240 L400,240 L400,254 L512,254 L512,262 Z"
+          fill="#3a1e4c"/>
+
+    <!-- bay -->
+    <rect x="0" y="260" width="512" height="252" fill="url(#swater)"/>
+    <rect x="0" y="260" width="512" height="22" fill="#ffab55" opacity="0.55"/>
+    <!-- bold glitter -->
+    <path d="M180,262 L248,262 L262,420 L166,420 Z" fill="#ffd98a" opacity="0.75"/>
+    <rect x="158" y="272" width="112" height="10" rx="5" fill="#ffe6a4"/>
+    <rect x="172" y="300" width="84"  height="9"  rx="4.5" fill="#ffe6a4" opacity="0.85"/>
+    <rect x="152" y="334" width="122" height="9"  rx="4.5" fill="#ffdf9a" opacity="0.7"/>
+    <rect x="170" y="374" width="88"  height="9"  rx="4.5" fill="#ffd98f" opacity="0.55"/>
+
+    <!-- hillside -->
+    <path d="M-10,470 C90,432 190,388 280,352 C360,320 430,290 516,252 L516,522 L-10,522 Z" fill="url(#shill)"/>
+    <path d="M-10,470 C90,432 190,388 280,352 C360,320 430,290 516,252"
+          fill="none" stroke="#ffc063" stroke-width="7" stroke-linecap="round" opacity="0.85"/>
+
+    <!-- bicycle: bold silhouette -->
+    <g stroke="#1d0c18" fill="none" stroke-linecap="round">
+      <circle cx="212" cy="264" r="64" stroke-width="20"/>
+      <circle cx="384" cy="234" r="64" stroke-width="20"/>
+      <!-- frame -->
+      <path d="M312,268 L352,168" stroke-width="20"/>              <!-- seat tube -->
+      <path d="M350,172 L232,168" stroke-width="20"/>              <!-- top tube -->
+      <path d="M238,172 L312,268" stroke-width="21"/>              <!-- down tube -->
+      <path d="M312,268 L384,234" stroke-width="18"/>              <!-- chainstay -->
+      <path d="M384,234 L350,172" stroke-width="17"/>              <!-- seat stay -->
+      <path d="M234,166 L212,264" stroke-width="18"/>              <!-- head tube + fork -->
+      <path d="M352,168 L358,146" stroke-width="15"/>              <!-- seatpost -->
+      <path d="M232,168 L222,146" stroke-width="15"/>              <!-- stem -->
+      <path d="M222,146 C200,138 184,146 186,162" stroke-width="15"/> <!-- bar -->
+      <path d="M330,142 L388,134" stroke-width="17"/>              <!-- saddle -->
+    </g>
+    <circle cx="312" cy="268" r="17" fill="#1d0c18"/>
+    <!-- rim light on the bike so it pops at tiny sizes -->
+    <g stroke="#ffd685" fill="none" stroke-linecap="round">
+      <path d="M350,170 L236,166" stroke-width="6"/>
+      <path d="M331,140 L387,132" stroke-width="5.5"/>
+      <path d="M177,220 A62,62 0 0 1 240,204" stroke-width="6" opacity="0.9"/>
+      <path d="M349,190 A62,62 0 0 1 412,174" stroke-width="6" opacity="0.9"/>
+    </g>
+
+    <!-- crest grass -->
+    <g stroke="#ffb763" stroke-width="6" stroke-linecap="round" fill="none">
+      <path d="M120,436 C126,420 138,412 152,410"/>
+      <path d="M448,290 C454,274 466,266 480,264"/>
+      <path d="M64,462 C70,446 82,438 96,436"/>
+    </g>
+    <g stroke="#0c281f" stroke-width="7" stroke-linecap="round" fill="none">
+      <path d="M104,444 C110,428 122,420 136,418"/>
+      <path d="M432,300 C438,284 450,276 464,274"/>
+    </g>
+  </g>
+</svg>

@@ -1,0 +1,366 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <clipPath id="squircle">
+      <rect x="0" y="0" width="512" height="512" rx="114" ry="114"/>
+    </clipPath>
+
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"    stop-color="#221a4e"/>
+      <stop offset="0.28" stop-color="#4b2668"/>
+      <stop offset="0.52" stop-color="#a63368"/>
+      <stop offset="0.7"  stop-color="#e35a4e"/>
+      <stop offset="0.86" stop-color="#ff8b3d"/>
+      <stop offset="1"    stop-color="#ffc255"/>
+    </linearGradient>
+
+    <radialGradient id="sunGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0"    stop-color="#ffe9a8" stop-opacity="0.95"/>
+      <stop offset="0.25" stop-color="#ffcf6e" stop-opacity="0.55"/>
+      <stop offset="0.6"  stop-color="#ff9a4d" stop-opacity="0.22"/>
+      <stop offset="1"    stop-color="#ff8a5e" stop-opacity="0"/>
+    </radialGradient>
+
+    <radialGradient id="sunDisc" cx="0.5" cy="0.42" r="0.6">
+      <stop offset="0"    stop-color="#fffbe0"/>
+      <stop offset="0.55" stop-color="#ffe07a"/>
+      <stop offset="1"    stop-color="#ffab45"/>
+    </radialGradient>
+
+    <linearGradient id="water" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"    stop-color="#ffb257"/>
+      <stop offset="0.18" stop-color="#e87455"/>
+      <stop offset="0.45" stop-color="#96406b"/>
+      <stop offset="0.75" stop-color="#4c2a6b"/>
+      <stop offset="1"    stop-color="#2c1d55"/>
+    </linearGradient>
+
+    <linearGradient id="glitter" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"   stop-color="#ffe59a" stop-opacity="0.95"/>
+      <stop offset="0.6" stop-color="#ffbe6e" stop-opacity="0.45"/>
+      <stop offset="1"   stop-color="#ffae63" stop-opacity="0"/>
+    </linearGradient>
+
+    <linearGradient id="hill" x1="0" y1="0.2" x2="0.25" y2="1">
+      <stop offset="0"    stop-color="#2e6247"/>
+      <stop offset="0.35" stop-color="#1c4a38"/>
+      <stop offset="0.7"  stop-color="#12332a"/>
+      <stop offset="1"    stop-color="#0a201b"/>
+    </linearGradient>
+
+    <linearGradient id="crestLight" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0"    stop-color="#ffd47a" stop-opacity="0.9"/>
+      <stop offset="0.55" stop-color="#ffb35e" stop-opacity="0.55"/>
+      <stop offset="1"    stop-color="#ff9a55" stop-opacity="0.15"/>
+    </linearGradient>
+
+    <linearGradient id="bike" x1="0" y1="228" x2="0" y2="336" gradientUnits="userSpaceOnUse">
+      <stop offset="0"    stop-color="#ffd685"/>
+      <stop offset="0.35" stop-color="#e8683f"/>
+      <stop offset="0.65" stop-color="#a2273f"/>
+      <stop offset="1"    stop-color="#471030"/>
+    </linearGradient>
+
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"   stop-color="#ffd98f"/>
+      <stop offset="0.5" stop-color="#c65a4a"/>
+      <stop offset="1"   stop-color="#5a1c33"/>
+    </linearGradient>
+
+    <radialGradient id="vignette" cx="0.38" cy="0.5" r="0.85">
+      <stop offset="0"    stop-color="#000" stop-opacity="0"/>
+      <stop offset="0.72" stop-color="#14082a" stop-opacity="0"/>
+      <stop offset="1"    stop-color="#14082a" stop-opacity="0.38"/>
+    </radialGradient>
+
+    <linearGradient id="cloud" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0"   stop-color="#5c2c60"/>
+      <stop offset="0.7" stop-color="#a3416a"/>
+      <stop offset="1"   stop-color="#ff9e6a"/>
+    </linearGradient>
+  </defs>
+
+  <g clip-path="url(#squircle)">
+    <!-- ======================= SKY ======================= -->
+    <rect x="0" y="0" width="512" height="512" fill="url(#sky)"/>
+
+    <!-- stars -->
+    <g fill="#ffffff">
+      <circle cx="72"  cy="52"  r="1.4" opacity="0.7"/>
+      <circle cx="150" cy="34"  r="1.0" opacity="0.5"/>
+      <circle cx="236" cy="66"  r="1.2" opacity="0.55"/>
+      <circle cx="330" cy="40"  r="1.5" opacity="0.75"/>
+      <circle cx="420" cy="78"  r="1.0" opacity="0.5"/>
+      <circle cx="470" cy="42"  r="1.2" opacity="0.6"/>
+      <circle cx="40"  cy="110" r="1.0" opacity="0.4"/>
+    </g>
+
+    <!-- sun glow + disc -->
+    <ellipse cx="190" cy="258" rx="225" ry="195" fill="url(#sunGlow)"/>
+    <circle cx="190" cy="254" r="55" fill="url(#sunDisc)"/>
+
+    <!-- atmospheric haze bands across the sun -->
+    <rect x="96"  y="247" width="230" height="4" rx="2" fill="#ffdf9a" opacity="0.4"/>
+    <rect x="70"  y="259" width="300" height="5" rx="2.5" fill="#ffd28a" opacity="0.45"/>
+
+    <!-- ======================= CLOUDS (wind-streaked) ======================= -->
+    <g>
+      <path d="M46,140 C110,132 210,128 300,136 C260,142 220,146 150,148 C110,149 70,146 46,140 Z" fill="url(#cloud)" opacity="0.85"/>
+      <path d="M64,146 C130,141 220,138 288,141" stroke="#ffca8a" stroke-width="2" fill="none" opacity="0.7" stroke-linecap="round"/>
+      <path d="M300,98 C350,92 420,92 462,100 C420,105 360,107 300,104 Z" fill="url(#cloud)" opacity="0.7"/>
+      <path d="M316,102 C370,98 430,98 456,101" stroke="#ffca8a" stroke-width="1.6" fill="none" opacity="0.55" stroke-linecap="round"/>
+      <path d="M120,196 C190,190 280,190 350,196 C290,201 200,202 120,199 Z" fill="url(#cloud)" opacity="0.75"/>
+      <path d="M136,199 C210,195 300,195 340,198" stroke="#ffc584" stroke-width="1.6" fill="none" opacity="0.6" stroke-linecap="round"/>
+      <path d="M368,168 C410,164 452,165 486,170 C452,174 404,174 368,171 Z" fill="url(#cloud)" opacity="0.6"/>
+    </g>
+
+    <!-- ======================= CITY + BRIDGE on horizon ======================= -->
+    <!-- haze band behind skyline -->
+    <rect x="0" y="262" width="512" height="17" fill="#ffb872" opacity="0.5"/>
+
+    <!-- skyline silhouette (far shore, sun sets behind it) -->
+    <path d="M0,279 L0,270 L14,270 L14,262 L24,262 L24,272 L38,272 L38,266 L48,266 L48,274 L70,274 L70,268
+             L82,268 L82,258 L88,258 L88,250 L94,250 L94,258 L100,258 L100,272 L118,272 L118,264 L130,264
+             L130,270 L146,270 L146,254 L152,254 L152,246 L160,246 L160,254 L166,254 L166,272 L180,272
+             L180,260 L186,260 L186,244 L194,244 L194,240 L198,240 L198,252 L206,252 L206,268 L222,268
+             L222,258 L230,258 L230,250 L238,250 L238,262 L252,262 L252,268 L268,268 L268,260 L278,260
+             L278,272 L296,272 L296,266 L308,266 L308,274 L330,274 L330,270 L348,270 L348,276 L512,276 L512,279 Z"
+          fill="#381d4a" opacity="0.92"/>
+
+    <!-- window lights -->
+    <g fill="#ffc97e">
+      <rect x="86"  y="253" width="1.6" height="2.2" opacity="0.9"/>
+      <rect x="90"  y="260" width="1.6" height="2.2" opacity="0.7"/>
+      <rect x="148" y="250" width="1.6" height="2.2" opacity="0.9"/>
+      <rect x="155" y="258" width="1.6" height="2.2" opacity="0.7"/>
+      <rect x="188" y="246" width="1.6" height="2.2" opacity="0.9"/>
+      <rect x="192" y="254" width="1.6" height="2.2" opacity="0.8"/>
+      <rect x="226" y="254" width="1.6" height="2.2" opacity="0.8"/>
+      <rect x="232" y="260" width="1.6" height="2.2" opacity="0.6"/>
+      <rect x="270" y="263" width="1.6" height="2.2" opacity="0.7"/>
+      <rect x="163" y="262" width="1.6" height="2.2" opacity="0.6"/>
+      <rect x="118" y="266" width="1.6" height="2.2" opacity="0.6"/>
+    </g>
+
+    <!-- suspension bridge, left across the bay mouth -->
+    <g stroke="#2e1440" fill="none">
+      <path d="M-6,271 L150,271" stroke-width="2.4"/>
+      <path d="M28,271 L28,247 M112,271 L112,247" stroke-width="3"/>
+      <path d="M-6,252 C10,262 18,268 28,247 M28,247 C52,272 88,272 112,247 M112,247 C124,266 136,269 150,266" stroke-width="1.6"/>
+      <path d="M42,262 L42,271 M56,266 L56,271 M70,268 L70,271 M84,266 L84,271 M98,262 L98,271" stroke-width="1"/>
+    </g>
+
+    <!-- ======================= BAY ======================= -->
+    <path d="M0,279 L512,279 L512,512 L0,512 Z" fill="url(#water)"/>
+    <!-- warm wash where sky meets water -->
+    <rect x="0" y="279" width="512" height="26" fill="#ffb257" opacity="0.45"/>
+
+    <!-- sun glitter path -->
+    <path d="M170,280 L210,280 L218,430 L162,430 Z" fill="url(#glitter)" opacity="0.95"/>
+    <g stroke-linecap="round" stroke="#ffe6a4">
+      <line x1="164" y1="286" x2="218" y2="286" stroke-width="2.6" opacity="0.95"/>
+      <line x1="172" y1="294" x2="210" y2="294" stroke-width="2.2" opacity="0.85"/>
+      <line x1="160" y1="304" x2="222" y2="304" stroke-width="2.2" opacity="0.75"/>
+      <line x1="174" y1="315" x2="206" y2="315" stroke-width="2"   opacity="0.7"/>
+      <line x1="156" y1="328" x2="224" y2="328" stroke-width="2"   opacity="0.6"/>
+      <line x1="170" y1="343" x2="214" y2="343" stroke-width="2"   opacity="0.5"/>
+      <line x1="152" y1="360" x2="228" y2="360" stroke-width="2"   opacity="0.42"/>
+      <line x1="168" y1="380" x2="216" y2="380" stroke-width="2"   opacity="0.32"/>
+      <line x1="150" y1="402" x2="230" y2="402" stroke-width="2"   opacity="0.22"/>
+    </g>
+
+    <!-- faint city-light reflections -->
+    <g stroke="#ff9f68" stroke-width="1.4" stroke-linecap="round" opacity="0.5">
+      <line x1="88"  y1="284" x2="88"  y2="296"/>
+      <line x1="150" y1="284" x2="150" y2="299"/>
+      <line x1="236" y1="284" x2="236" y2="294"/>
+      <line x1="270" y1="283" x2="270" y2="291"/>
+      <line x1="52"  y1="283" x2="52"  y2="292"/>
+    </g>
+
+    <!-- wave hints -->
+    <g stroke="#6c3a6e" stroke-width="1.6" stroke-linecap="round" opacity="0.55" fill="none">
+      <path d="M40,330 C60,328 80,328 100,330"/>
+      <path d="M250,340 C270,338 292,338 312,340"/>
+      <path d="M60,376 C86,373 112,373 138,376"/>
+      <path d="M244,384 C268,381 292,381 316,384"/>
+      <path d="M96,430 C126,426 158,426 188,430"/>
+    </g>
+
+    <!-- ======================= HILLSIDE ======================= -->
+    <path id="hillPath"
+          d="M-10,478 C70,446 140,412 210,376 C252,355 292,340 336,331
+             C382,322 438,300 516,262 L516,522 L-10,522 Z"
+          fill="url(#hill)"/>
+
+    <!-- warm rim light along the crest -->
+    <path d="M-10,478 C70,446 140,412 210,376 C252,355 292,340 336,331 C382,322 438,300 516,262"
+          fill="none" stroke="url(#crestLight)" stroke-width="4.2" stroke-linecap="round"/>
+
+    <!-- subtle slope contours -->
+    <g stroke="#0d2a22" stroke-width="2.4" fill="none" opacity="0.65">
+      <path d="M30,502 C110,470 190,436 262,404"/>
+      <path d="M180,470 C250,442 320,416 388,392"/>
+      <path d="M330,480 C390,452 450,424 505,398"/>
+    </g>
+    <g stroke="#3f7a52" stroke-width="1.6" fill="none" opacity="0.4">
+      <path d="M120,440 C180,414 240,390 300,368"/>
+      <path d="M300,420 C360,396 420,370 478,344"/>
+    </g>
+    <!-- wind combing through the hillside grass -->
+    <g stroke="#4d8a5c" stroke-width="1.8" stroke-linecap="round" fill="none" opacity="0.35">
+      <path d="M150,452 C162,446 174,443 186,443"/>
+      <path d="M226,424 C238,418 250,415 262,415"/>
+      <path d="M116,478 C128,472 140,469 152,469"/>
+      <path d="M296,398 C308,392 320,389 332,389"/>
+      <path d="M362,442 C374,436 386,433 398,433"/>
+      <path d="M430,410 C442,404 454,401 466,401"/>
+      <path d="M262,462 C274,456 286,453 298,453"/>
+      <path d="M404,364 C414,359 424,356 434,356"/>
+      <path d="M470,376 C480,371 490,368 500,368"/>
+    </g>
+
+    <!-- ======================= BICYCLE ======================= -->
+    <!-- ground shadow -->
+    <ellipse cx="356" cy="336" rx="92" ry="10" fill="#08170f" opacity="0.45"/>
+
+    <g>
+      <!-- spokes -->
+      <g stroke="#54223a" stroke-width="1" opacity="0.9">
+        <path d="M299,268 L299,326 M270,297 L328,297 M279,277 L319,317 M319,277 L279,317"/>
+        <path d="M409,260 L409,318 M380,289 L438,289 M389,269 L429,309 M429,269 L389,309"/>
+      </g>
+      <!-- tires -->
+      <circle cx="299" cy="297" r="36" fill="none" stroke="#26101d" stroke-width="7"/>
+      <circle cx="409" cy="289" r="36" fill="none" stroke="#26101d" stroke-width="7"/>
+      <!-- rims (catching the light) -->
+      <circle cx="299" cy="297" r="30" fill="none" stroke="url(#rim)" stroke-width="2.2"/>
+      <circle cx="409" cy="289" r="30" fill="none" stroke="url(#rim)" stroke-width="2.2"/>
+      <!-- hubs -->
+      <circle cx="299" cy="297" r="4.5" fill="#3b1628"/>
+      <circle cx="409" cy="289" r="4.5" fill="#3b1628"/>
+
+      <!-- chain -->
+      <line x1="370" y1="296" x2="407" y2="285" stroke="#31121f" stroke-width="1.4" opacity="0.85"/>
+      <line x1="368" y1="318" x2="409" y2="293" stroke="#31121f" stroke-width="1.2" opacity="0.6"/>
+
+      <!-- frame -->
+      <g stroke="url(#bike)" fill="none" stroke-linecap="round">
+        <path d="M365,307 L391,247" stroke-width="6"/>            <!-- seat tube -->
+        <path d="M389,249 L317,245" stroke-width="6"/>            <!-- top tube -->
+        <path d="M322,260 L365,307" stroke-width="6.6"/>          <!-- down tube -->
+        <path d="M365,307 L409,289" stroke-width="5"/>            <!-- chainstay -->
+        <path d="M409,289 L389,251" stroke-width="4.6"/>          <!-- seat stay -->
+        <path d="M317,244 L323,261" stroke-width="6.4"/>          <!-- head tube -->
+        <path d="M322,260 C317,274 306,286 299,297" stroke-width="4.6"/> <!-- fork -->
+        <path d="M391,247 L389,236" stroke-width="4"/>            <!-- seatpost -->
+        <path d="M317,245 L308,237" stroke-width="4.4"/>          <!-- stem -->
+      </g>
+
+      <!-- drop handlebar -->
+      <path d="M308,237 C297,234 290,238 290,245 C290,252 296,256 302,254"
+            fill="none" stroke="url(#bike)" stroke-width="4.4" stroke-linecap="round"/>
+
+      <!-- saddle -->
+      <path d="M373,236 C381,232.5 398,232 406,234.5 C402,239 382,240.5 373,238 Z" fill="#33121f"/>
+      <path d="M374,235.6 C382,232.6 397,232 405,234" fill="none" stroke="#ffd58a" stroke-width="1.5" stroke-linecap="round"/>
+
+      <!-- crank + chainring + pedals -->
+      <circle cx="365" cy="307" r="12" fill="none" stroke="#3c1527" stroke-width="3.4"/>
+      <circle cx="365" cy="307" r="12" fill="none" stroke="url(#rim)" stroke-width="1.2" opacity="0.8"/>
+      <line x1="365" y1="307" x2="347" y2="322" stroke="#33121f" stroke-width="3.6" stroke-linecap="round"/>
+      <line x1="340" y1="323" x2="354" y2="322" stroke="#26101d" stroke-width="4" stroke-linecap="round"/>
+      <line x1="365" y1="307" x2="381" y2="293" stroke="#33121f" stroke-width="3.2" stroke-linecap="round"/>
+      <line x1="376" y1="292" x2="388" y2="292" stroke="#26101d" stroke-width="3.6" stroke-linecap="round"/>
+
+      <!-- specular glints -->
+      <g fill="#fff3cf">
+        <circle cx="290" cy="242" r="2"/>
+        <circle cx="375" cy="236" r="1.7"/>
+        <circle cx="299" cy="267" r="1.6"/>
+        <circle cx="409" cy="259" r="1.6"/>
+        <circle cx="322" cy="252" r="1.5"/>
+      </g>
+      <!-- top-edge highlights on tubes -->
+      <path d="M388,247.5 L320,244" stroke="#ffdf9c" stroke-width="1.5" fill="none" stroke-linecap="round" opacity="0.9"/>
+      <path d="M323,259 L363,304" stroke="#ffc37c" stroke-width="1.4" fill="none" stroke-linecap="round" opacity="0.6"/>
+    </g>
+
+    <!-- ======================= CREST GRASS (wind to the right) ======================= -->
+    <g stroke-linecap="round" fill="none">
+      <g stroke="#0c281f" stroke-width="2.4">
+        <path d="M262,336 C266,326 274,321 284,320"/>
+        <path d="M330,332 C334,322 342,318 352,317"/>
+        <path d="M438,306 C442,296 450,292 460,291"/>
+        <path d="M232,352 C236,341 245,336 256,335"/>
+        <path d="M204,364 C208,354 216,349 226,348"/>
+      </g>
+      <g stroke="#ffb763" stroke-width="1.7">
+        <path d="M270,334 C273,325 280,321 289,320"/>
+        <path d="M338,330 C341,321 348,317 356,316"/>
+        <path d="M446,304 C449,295 456,291 464,290"/>
+        <path d="M240,350 C243,341 250,337 258,336"/>
+        <path d="M300,338 C303,330 309,326 316,325"/>
+        <path d="M470,296 C473,287 480,283 488,282"/>
+      </g>
+      <g stroke="#e8853f" stroke-width="1.4">
+        <path d="M212,362 C215,353 221,349 228,348"/>
+        <path d="M282,332 C285,324 291,321 298,320"/>
+        <path d="M424,310 C427,301 433,297 440,296"/>
+      </g>
+    </g>
+
+    <!-- ======================= FOREGROUND FOLIAGE (periphery) ======================= -->
+    <!-- near bank in the bottom-left corner so the reeds grow from land -->
+    <path d="M-10,512 L-10,462 C20,460 56,470 92,486 C110,494 124,503 134,512 Z" fill="#071812"/>
+    <g stroke-linecap="round" fill="none">
+      <g stroke="#081d16" stroke-width="5">
+        <path d="M18,514 C22,470 34,436 58,412"/>
+        <path d="M44,514 C46,474 56,444 78,424"/>
+        <path d="M-2,500 C6,466 18,442 40,424"/>
+        <path d="M70,514 C74,482 84,458 102,444"/>
+      </g>
+      <g stroke="#123c2c" stroke-width="3.4">
+        <path d="M30,514 C36,472 50,442 76,420"/>
+        <path d="M8,514 C14,478 26,450 48,432"/>
+        <path d="M58,514 C64,480 76,454 96,438"/>
+      </g>
+      <g stroke="#ffab55" stroke-width="1.8" opacity="0.85">
+        <path d="M58,412 C64,405 72,401 82,400"/>
+        <path d="M78,424 C84,417 92,413 101,412"/>
+        <path d="M40,424 C46,417 54,413 63,412"/>
+      </g>
+      <!-- seed heads -->
+      <ellipse cx="86" cy="399" rx="6" ry="3.4" fill="#e8974a" transform="rotate(24 86 399)"/>
+      <ellipse cx="105" cy="411" rx="5.4" ry="3" fill="#d8813f" transform="rotate(24 105 411)"/>
+      <ellipse cx="66" cy="411" rx="5" ry="2.8" fill="#c9773c" transform="rotate(24 66 411)"/>
+
+      <!-- right-corner blades -->
+      <g stroke="#081d16" stroke-width="4.4">
+        <path d="M496,514 C494,478 486,450 468,430"/>
+        <path d="M474,514 C470,484 460,462 444,448"/>
+        <path d="M508,486 C504,458 494,438 478,426"/>
+      </g>
+      <g stroke="#12382a" stroke-width="3">
+        <path d="M486,514 C482,482 472,458 454,442"/>
+        <path d="M504,502 C500,472 490,450 474,438"/>
+      </g>
+      <g stroke="#ff9d4e" stroke-width="1.6" opacity="0.8">
+        <path d="M468,430 C474,424 482,421 490,421"/>
+        <path d="M444,448 C450,442 457,439 465,439"/>
+      </g>
+    </g>
+
+    <!-- ======================= WIND: flying seeds + streaks ======================= -->
+    <g>
+      <path d="M236,258 C244,254 252,254 258,258" stroke="#ffd9a0" stroke-width="1.4" fill="none" opacity="0.7" stroke-linecap="round"/>
+      <ellipse cx="262" cy="257" rx="3.4" ry="1.9" fill="#ffcf92" transform="rotate(-14 262 257)"/>
+      <path d="M204,236 C212,232 220,232 226,235" stroke="#ffd9a0" stroke-width="1.2" fill="none" opacity="0.55" stroke-linecap="round"/>
+      <ellipse cx="230" cy="234" rx="2.8" ry="1.6" fill="#ffcf92" transform="rotate(-12 230 234)"/>
+      <path d="M258,214 C264,211 271,211 276,213" stroke="#ffd9a0" stroke-width="1" fill="none" opacity="0.4" stroke-linecap="round"/>
+      <ellipse cx="280" cy="212" rx="2.4" ry="1.4" fill="#ffc98c" transform="rotate(-10 280 212)"/>
+    </g>
+
+    <!-- vignette for focus -->
+    <rect x="0" y="0" width="512" height="512" fill="url(#vignette)"/>
+  </g>
+</svg>
