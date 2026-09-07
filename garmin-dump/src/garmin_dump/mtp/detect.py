@@ -35,6 +35,8 @@ from __future__ import annotations
 import re
 import shutil
 import subprocess
+import time
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from garmin_dump.errors import DeviceBusyError, DeviceNotFoundError
@@ -347,3 +349,38 @@ def detect_garmin(runner: MtpRunner) -> DetectedDevice:
         "If `mtp-detect` finds the device but garmin-dump doesn't, this is a "
         "parser bug — please report the full mtp-detect output."
     )
+
+
+# Right after a watch is physically plugged in, the kernel/USB stack can take well
+# over ten seconds to finish enumerating it — `mtp-detect` faithfully reports "no
+# device" during that window because there genuinely isn't one from libmtp's point
+# of view yet. A single detect_garmin() call racing that window is the #1 cause of
+# "sync fails right after I plug it in" reports, so callers that run at the start
+# of a session (like `pull`) should give the device a chance to show up instead of
+# failing on the first miss.
+DEFAULT_DETECT_RETRY_TIMEOUT_S = 30.0
+DEFAULT_DETECT_RETRY_INTERVAL_S = 3.0
+
+
+def detect_garmin_with_retry(
+    runner: MtpRunner,
+    *,
+    timeout_s: float = DEFAULT_DETECT_RETRY_TIMEOUT_S,
+    interval_s: float = DEFAULT_DETECT_RETRY_INTERVAL_S,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> DetectedDevice:
+    """Call detect_garmin(), retrying on DeviceNotFoundError for up to timeout_s.
+
+    Every other error (busy device, missing tools, ...) is not a "not found yet"
+    condition and propagates immediately without retrying.
+    """
+    deadline = clock() + timeout_s
+    while True:
+        try:
+            return detect_garmin(runner)
+        except DeviceNotFoundError:
+            remaining = deadline - clock()
+            if remaining <= 0:
+                raise
+            sleep(min(interval_s, remaining))

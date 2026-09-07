@@ -61,7 +61,7 @@ from garmin_dump.errors import (
 )
 from garmin_dump.ingest.dispatcher import ingest_file
 from garmin_dump.logging_setup import get_logger
-from garmin_dump.mtp.detect import detect_garmin
+from garmin_dump.mtp.detect import detect_garmin_with_retry
 from garmin_dump.mtp.download import download_file, gc_tmp
 from garmin_dump.mtp.inventory import Inventory, ResolvedFile, fetch_inventory
 from garmin_dump.mtp.runner import MtpRunner
@@ -135,7 +135,7 @@ def run_pull(
         try:
             # ----- Detect + identify --------------------------------------------------
             try:
-                detect_garmin(runner)
+                detect_garmin_with_retry(runner)
             except GarminDumpError as e:
                 console.print(f"[red]error:[/red] {e}")
                 repo.finish_run(
