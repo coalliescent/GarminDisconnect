@@ -94,26 +94,186 @@
         }
     }
     function renderActivityHRZones(p)           { plot('activity-hr-zones', p); }
+
+    // ---- Activity GPS map -----------------------------------------------
+
+    /// Whether the Route card is currently expanded to fill the pane.
+    ///
+    /// Module-level rather than per-render, because the card is rebuilt from
+    /// scratch every time the user picks a different activity — without this
+    /// the map would silently collapse out from under them on every click.
+    /// It's a view preference, not a property of the activity.
+    var gpdMapExpanded = false;
+
+    /// Build (or reuse) the Route card's two-part shell and return the div
+    /// Plotly should draw into.
+    ///
+    ///     .chart-slot.gps-slot     flex column, definite height
+    ///     ├── .gps-toolbar         color / style tabs + expand button
+    ///     └── .gps-plot            Plotly.newPlot target
+    ///
+    /// The controls have to be a SIBLING of the plot div: Plotly.newPlot
+    /// replaces its target's children wholesale, so anything living inside
+    /// it is wiped on every render. (bootstrap.js solves the same problem
+    /// for the interval pickers with `ensureChartWrapper`.)
+    ///
+    /// Rebuilt rather than assumed, because the chart_hidden / chart_empty
+    /// paths in bootstrap.js clear the slot's innerHTML — so an indoor
+    /// activity destroys the shell and the next GPS activity has to put it
+    /// back.
+    function ensureGPSShell(slotEl) {
+        slotEl.classList.toggle('gps-expanded', gpdMapExpanded);
+        let plotEl = slotEl.querySelector('.gps-plot');
+        if (plotEl) return plotEl;
+
+        slotEl.innerHTML = '';
+        const toolbar = document.createElement('div');
+        toolbar.className = 'gps-toolbar';
+        slotEl.appendChild(toolbar);
+        plotEl = document.createElement('div');
+        plotEl.className = 'gps-plot';
+        slotEl.appendChild(plotEl);
+        return plotEl;
+    }
+
     function renderActivityGPSMap(p) {
-        plot('activity-gps-map', p);
+        const slotEl = slot('activity-gps-map');
+        if (!slotEl) {
+            console.warn('charts.js: no slot for activity-gps-map');
+            return;
+        }
+        const plotEl = ensureGPSShell(slotEl);
+        // Toolbar first: it's a flex sibling above the plot, so its height
+        // comes out of the plot's. Filling it after newPlot would leave
+        // Plotly sized to a box that no longer exists — and the toolbar's
+        // height genuinely varies, because the route-color group is dropped
+        // for activities with no per-sample metrics and wraps to a second
+        // row in a narrow window.
+        renderGPSToolbar(slotEl, plotEl, p);
+
+        Plotly.newPlot(plotEl, p.data, p.layout, p.config);
+        attachClickBridge(plotEl, 'activity-gps-map');
+
         // Stash the trim helper data so the trim-controls slot can drive
         // live polyline restyles during handle drag without needing a Swift
-        // round-trip per pointermove tick.
-        const el = slot('activity-gps-map');
-        if (el && p && p.trim_targets) {
-            el._gpdTrimTargets = p.trim_targets;
+        // round-trip per pointermove tick. `_gpdPlot` goes alongside it
+        // because the trim code only knows how to find the slot, and the
+        // slot is no longer the Plotly div.
+        slotEl._gpdPlot = plotEl;
+        if (p && p.trim_targets) {
+            slotEl._gpdTrimTargets = p.trim_targets;
         }
-        installGPSMapHandlers();
-        installGPSMarkerIcons(el, 90);
+
+        installGPSMapHandlers(plotEl);
+        installGPSMarkerIcons(plotEl, 90);
     }
+
+    /// Fill the Route card's toolbar: route-color tabs on the left,
+    /// map-view tabs pushed to the right, expand/collapse at the far end.
+    ///
+    /// These were Plotly `updatemenus` until they weren't. Plotly positions
+    /// those in paper coordinates derived from measured SVG text width, so
+    /// the right-anchored map-view bar was re-laid-out on every relayout —
+    /// which is every button click and every window resize — and visibly
+    /// jumped, clipping past the card's edge. As an HTML flex row the right
+    /// alignment is a layout fact that is never re-measured.
+    ///
+    /// Rebuilt on every render because the color options are per-activity:
+    /// `availableGPSMetrics` drops metrics the watch didn't record, so a
+    /// hike offers fewer than a power-meter ride. Both groups reset to
+    /// index 0, which is the state Swift encodes the traces and layers in.
+    function renderGPSToolbar(slotEl, plotEl, p) {
+        const bar = slotEl.querySelector('.gps-toolbar');
+        if (!bar) return;
+        bar.innerHTML = '';
+
+        const colorModes = (p && Array.isArray(p.color_modes)) ? p.color_modes : [];
+        const mapStyles  = (p && Array.isArray(p.map_styles))  ? p.map_styles  : [];
+
+        if (colorModes.length > 1) {
+            bar.appendChild(tabGroup('gps-color-tabs', colorModes, function (mode) {
+                Plotly.restyle(plotEl, { visible: mode.visible });
+                // Deferred redraw: restyling `visible` on scattermap traces
+                // flips the flag without repainting the GL layer, so the
+                // rainbow needs two clicks to appear without this. Runs
+                // after Plotly has finished applying the restyle.
+                setTimeout(function () { Plotly.redraw(plotEl); }, 0);
+            }));
+        }
+
+        const right = document.createElement('div');
+        right.className = 'gps-toolbar-right';
+        bar.appendChild(right);
+
+        if (mapStyles.length > 1) {
+            right.appendChild(tabGroup('gps-style-tabs', mapStyles, function (style) {
+                Plotly.relayout(plotEl, { 'map.layers': style.layers });
+                // The relayout recreates the MapLibre layers with Plotly's
+                // maxzoom applied again, so the overzoom fix has to be redone.
+                setTimeout(function () { fixTileOverzoom(plotEl); }, 0);
+            }));
+        }
+
+        const expand = document.createElement('button');
+        expand.className = 'gps-expand-btn';
+        applyExpandLabel(expand);
+        expand.addEventListener('click', function () {
+            gpdMapExpanded = !gpdMapExpanded;
+            slotEl.classList.toggle('gps-expanded', gpdMapExpanded);
+            applyExpandLabel(expand);
+            // The slot's height is a CSS class swap; Plotly has to be told
+            // its div changed size. Same rAF-then-resize shape showTab uses
+            // in bootstrap.js for charts laid out while display:none.
+            requestAnimationFrame(function () {
+                try { Plotly.Plots.resize(plotEl); } catch (e) { /* ignore */ }
+                if (gpdMapExpanded && slotEl.scrollIntoView) {
+                    slotEl.scrollIntoView({ block: 'start' });
+                }
+            });
+        });
+        right.appendChild(expand);
+
+        /// ⤢ / ⤡ as plain text, matching the ◀ ▶ and ▲ ▼ glyph buttons
+        /// elsewhere. Deliberately not an icon file — see the note on
+        /// installGPSMarkerIcons about this app staying fully offline.
+        function applyExpandLabel(btn) {
+            btn.textContent = gpdMapExpanded ? '⤡' : '⤢';
+            btn.title = gpdMapExpanded ? 'Collapse map' : 'Expand map';
+        }
+
+        /// One segmented control, reusing the .window-tabs styling from the
+        /// chart interval pickers. `onPick` gets the chosen payload entry.
+        function tabGroup(className, entries, onPick) {
+            const group = document.createElement('div');
+            group.className = 'window-tabs ' + className;
+            entries.forEach(function (entry, idx) {
+                const btn = document.createElement('button');
+                btn.className = 'window-tab' + (idx === 0 ? ' active' : '');
+                btn.textContent = entry.label;
+                btn.addEventListener('click', function () {
+                    group.querySelectorAll('.window-tab').forEach(function (b) {
+                        b.classList.toggle('active', b === btn);
+                    });
+                    try {
+                        onPick(entry);
+                    } catch (e) {
+                        console.error('gps toolbar action failed:', e);
+                    }
+                });
+                group.appendChild(btn);
+            });
+            return group;
+        }
+    }
+
     function renderActivityTrimControls(p) {
         installTrimControls(p);
     }
 
-    /// Install GPS-map-specific event handlers: the corner hover legend,
-    /// plus a force-redraw on every updatemenu button click.
+    /// Install GPS-map-specific event handlers on the plot div: the corner
+    /// hover legend, and the post-render tile-overzoom fix.
     ///
-    /// Hover legend: Plotly's newPlot() purges the chart slot's children,
+    /// Hover legend: Plotly's newPlot() purges the plot div's children,
     /// so we always rebuild the overlay element after each render. The
     /// overlay is hidden by default and only appears while the cursor is
     /// actually hovering a point on the trail (plain trace) or one of the
@@ -122,33 +282,16 @@
     /// events fire without showing Plotly's default tooltip; marker traces
     /// expose their label via `hovertext` instead of `text`.
     ///
-    /// Force-redraw on button click: Plotly's restyle of `visible` on
-    /// scattermap (MapLibre) traces sometimes leaves the canvas stale —
-    /// the trace's `visible` flag flips, but the GL layer doesn't repaint
-    /// until something else triggers a redraw. The user-visible symptom
-    /// is that the color-by tabs need two clicks before the rainbow
-    /// actually shows up. Calling Plotly.redraw on `plotly_buttonclicked`
-    /// (deferred via setTimeout(0) so it runs *after* the button's own
-    /// restyle/relayout has completed) forces the GL layer to repaint
-    /// every time.
-    function installGPSMapHandlers() {
-        const el = slot('activity-gps-map');
+    /// The overlays live on the plot div rather than the card, so their
+    /// bottom-corner offsets measure from the map itself and aren't thrown
+    /// off by the toolbar strip above it.
+    function installGPSMapHandlers(el) {
         if (!el || !el.on) return;
         const existing = el.querySelector('.gps-hover-legend');
         if (existing) existing.remove();
         const overlay = document.createElement('div');
         overlay.className = 'gps-hover-legend hidden';
         el.appendChild(overlay);
-
-        // Per-install state: which button index is active in each menu.
-        // The Swift side sets every menu's `active: 0` initially, so the
-        // map is empty until the user clicks something — and an empty
-        // entry falls back to index 0 in `applyActive` below.
-        // This is reset on every newPlot because installGPSMapHandlers
-        // is re-called and a fresh closure is built. Plotly.purge (run
-        // by newPlot) also clears any old listeners, so re-binding here
-        // doesn't stack handlers.
-        const activeByMenu = {};
 
         el.on('plotly_hover', function (eventData) {
             const pt = eventData && eventData.points && eventData.points[0];
@@ -164,76 +307,20 @@
             overlay.classList.add('hidden');
         });
 
-        el.on('plotly_buttonclicked', function (eventData) {
-            // Track the click directly from the event payload — this is
-            // the source of truth and doesn't depend on _fullLayout
-            // surviving Plotly.redraw.
-            if (eventData && eventData.menu && eventData.button) {
-                const mIdx = eventData.menu._index;
-                const bIdx = eventData.button._index;
-                if (typeof mIdx === 'number' && typeof bIdx === 'number') {
-                    activeByMenu[mIdx] = bIdx;
-                }
-            }
-            // Defer one tick so Plotly has finished applying the button's
-            // own restyle/relayout, then force a canvas redraw (works
-            // around the "two clicks for color-by" scattermap quirk) and
-            // re-apply our active class on the freshly-rendered DOM.
-            // Also re-fix tile overzooming because tile-style button
-            // clicks trigger a relayout that recreates MapLibre layers
-            // with Plotly's maxzoom applied again.
-            setTimeout(function () {
-                Plotly.redraw(el);
-                applyActive();
-                fixTileOverzoom(el);
-            }, 0);
-        });
-
-        // Re-apply the active class after every render — newPlot,
-        // restyle, relayout, redraw all emit plotly_afterplot.
+        // newPlot, restyle, relayout, redraw and resize all emit
+        // plotly_afterplot, and any of them can rebuild the MapLibre layers.
         el.on('plotly_afterplot', function () {
-            applyActive();
             fixTileOverzoom(el);
         });
 
         // Initial pass for the first newPlot. plotly_afterplot may fire
         // synchronously inside newPlot before this listener is bound,
-        // so we'd miss it without an explicit call. Defer to next tick
-        // so the button DOM / MapLibre map have settled.
+        // so we'd miss it without an explicit call. Defer so the MapLibre
+        // map has settled.
         setTimeout(function () {
-            applyActive();
             fixTileOverzoom(el);
             installGPSScaleBar(el);
         }, 100);
-
-        /// Apply the .gpd-active-button class to the active button in
-        /// each updatemenu, based on `activeByMenu` state. Robust to
-        /// Plotly's container DOM by grouping buttons by their parent
-        /// (each menu's buttons share a parent `<g>`).
-        function applyActive() {
-            const allButtons = el.querySelectorAll('g.updatemenu-button');
-            if (!allButtons.length) return;
-            const groups = [];
-            const parentToGroup = new Map();
-            allButtons.forEach(function (btn) {
-                const parent = btn.parentNode;
-                let g = parentToGroup.get(parent);
-                if (!g) {
-                    g = [];
-                    parentToGroup.set(parent, g);
-                    groups.push(g);
-                }
-                g.push(btn);
-            });
-            groups.forEach(function (buttons, mIdx) {
-                const activeIdx = typeof activeByMenu[mIdx] === 'number'
-                    ? activeByMenu[mIdx]
-                    : 0;
-                buttons.forEach(function (btn, bIdx) {
-                    btn.classList.toggle('gpd-active-button', bIdx === activeIdx);
-                });
-            });
-        }
     }
 
     // ---- Map badges (start / pause / stop) ------------------------------
@@ -654,8 +741,12 @@
         renderSegStateVisuals();
 
         // ---- Live polyline restyle on the GPS map ----
-        const mapEl = slot('activity-gps-map');
-        const trimTargets = mapEl ? mapEl._gpdTrimTargets : null;
+        // The Route card is a shell (toolbar + plot div), so the Plotly
+        // element to restyle is the `.gps-plot` inside it, not the slot.
+        // renderActivityGPSMap stashes both on the slot.
+        const slotEl = slot('activity-gps-map');
+        const mapEl = slotEl ? slotEl._gpdPlot : null;
+        const trimTargets = slotEl ? slotEl._gpdTrimTargets : null;
 
         function buildKeptLatLon() {
             if (!trimTargets || !Array.isArray(trimTargets.samples)) return null;
@@ -685,7 +776,11 @@
         }
 
         function pushPreviewToMap() {
-            if (!mapEl || !trimTargets) return;
+            // `mapEl.data` is Plotly's marker that this div is a live plot —
+            // the Route card's shell is torn down and rebuilt whenever the
+            // map renders empty, which can leave `_gpdPlot` pointing at a
+            // detached div.
+            if (!mapEl || !mapEl.data || !trimTargets) return;
             const k = buildKeptLatLon();
             if (!k) return;
             try {

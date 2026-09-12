@@ -134,18 +134,95 @@ main#content {
     margin-top: -4px;
 }
 
-/* Activity GPS map at the top of the activity-detail pane. Full-width and
- * tall enough that the route doesn't get squashed into a sliver.
+/* ---- Activity GPS map ("Route" card) ----
  *
- * `overflow: visible` overrides the base `.chart-slot` rule for this slot
- * specifically, so the Plotly updatemenu button bars (Road/Satellite/Topo
- * on the right, color-by on the left) aren't clipped during horizontal
- * window resizes. They're rendered in the SVG's margin area, which can
- * briefly exceed the slot's content box mid-resize before Plotly settles.
+ * The card is a two-part shell built by charts.js: a `.gps-toolbar` strip of
+ * HTML controls on top, and the `.gps-plot` div Plotly draws into below.
+ * Plotly.newPlot replaces its target's children, so the controls have to be
+ * a sibling of the plot rather than live inside it.
+ *
+ * `height` (not `min-height`): Plotly sizes a chart to its container only
+ * when the container has a definite height, and the expand toggle works by
+ * swapping that height via `.gps-expanded`. The Swift layout deliberately
+ * sends no `layout.height` so CSS is the single source of truth.
+ *
+ * `overflow: hidden` is inherited from `.chart-slot` and wanted here: the
+ * controls are ordinary flow content that can't escape the card, so the
+ * rounded corners clip cleanly. (It used to be forced to `visible` because
+ * the Road/Satellite/Topo bar was a Plotly `updatemenus` rendered in the
+ * SVG's margin, which spilled past the card edge.)
  */
 .chart-slot.gps-slot {
-    min-height: 600px;
-    overflow: visible;
+    height: 600px;
+    display: flex;
+    flex-direction: column;
+}
+
+/* Expanded: fill the visible detail pane. charts.js scrolls the card to the
+ * top of the scrollport on expand, which puts its top edge at the viewport
+ * top, so 100vh minus a 40px slack is the tallest the card can be and still
+ * fit whole. The leftover strip lets the next panel peek through, which also
+ * signals there's more below. */
+.chart-slot.gps-slot.gps-expanded {
+    height: calc(100vh - 40px);
+}
+
+/* `min-height: 0` lets the plot actually shrink inside the flex column —
+ * without it the flex item floors at its content height and the card grows
+ * past its own box. `position: relative` makes it the containing block for
+ * the hover-legend / scale-bar overlays, which anchor to the map's corners
+ * rather than the card's. */
+.gps-plot {
+    flex: 1 1 auto;
+    min-height: 0;
+    position: relative;
+}
+
+/* Route-color tabs on the left, map-view tabs and the expand button pushed
+ * to the right by `.gps-toolbar-right`'s `margin-left: auto`. Right-alignment
+ * is therefore a layout fact, not a measured coordinate — which is the whole
+ * reason these stopped being Plotly updatemenus (those were re-positioned
+ * from SVG text metrics on every relayout, so they jumped and clipped).
+ *
+ * `flex-wrap` is the overflow answer: a power-meter ride offers five color
+ * options, and in a narrow window the right-hand group drops to a second row
+ * instead of colliding or being cut off. */
+.gps-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex: 0 0 auto;
+}
+.gps-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+}
+
+/* Same 22x22 ghost square as `.window-arrow`, holding a ⤢ / ⤡ glyph. */
+.gps-expand-btn {
+    background: transparent;
+    border: 1px solid #3a3a3c;
+    color: var(--fg-dim);
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    cursor: pointer;
+    padding: 0;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.gps-expand-btn:hover {
+    background: rgba(78, 201, 176, 0.1);
+    color: var(--fg);
+    border-color: #4ec9b0;
 }
 
 .section-heading {
@@ -667,55 +744,6 @@ main#content {
         0 0 4px rgba(0, 0, 0, 0.9),
         0 0 2px rgba(0, 0, 0, 0.7);
     white-space: nowrap;
-}
-
-/* ---- Plotly updatemenu button styling override ----
- * Plotly mutates the button rect fill via inline style on mouseenter,
- * leaving stale inline fills behind on hover-out — without an explicit
- * default rule, washed-out leftover colors can stick around. So we
- * pin every state with `!important` rules:
- *
- *   default → dark bg,           light text  (clean, neutral)
- *   hover   → low-sat dark teal, light text  (subtle hint)
- *   active  → vivid accent bg,   dark text   (high contrast pop)
- *
- * Plotly's button DOM is a `g.updatemenu-button` containing a
- * `rect.updatemenu-item-rect` and a `text.updatemenu-item-text`.
- *
- * The active (selected) state has NO class added by Plotly — it's
- * conveyed only via inline rect fill, leaving CSS no hook to style
- * the matching text. So charts.js walks the full layout after each
- * render and tags the active `g.updatemenu-button` with
- * `.gpd-active-button`; the rules below pick that up.
- *
- * Cascade order is critical:
- *   1. default       — base reset
- *   2. hover         — subtle, lower visual weight than active
- *   3. active        — comes LAST so it wins over hover too (the active
- *                      button stays vivid even when the cursor is on it,
- *                      which feels more correct than hover bumping it
- *                      down to the low-sat state)
- * Hover's `:hover` pseudo-class adds specificity, so to make active win
- * we use a more specific selector for active: `g.updatemenu-button.gpd-
- * active-button` adds an extra class to bump it past hover's pseudo.
- */
-g.updatemenu-button rect.updatemenu-item-rect {
-    fill: #1e1e1e !important;
-}
-g.updatemenu-button text.updatemenu-item-text {
-    fill: var(--fg) !important;
-}
-g.updatemenu-button:hover rect.updatemenu-item-rect {
-    fill: #2a3a37 !important;
-}
-g.updatemenu-button:hover text.updatemenu-item-text {
-    fill: var(--fg) !important;
-}
-g.updatemenu-button.gpd-active-button rect.updatemenu-item-rect {
-    fill: var(--accent) !important;
-}
-g.updatemenu-button.gpd-active-button text.updatemenu-item-text {
-    fill: #1a1a1a !important;
 }
 
 /* ===== Activity trim controls =====

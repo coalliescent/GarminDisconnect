@@ -1401,14 +1401,18 @@ public enum PlotlyEncoder {
     //
     // Renders the GPS trail on a real MapLibre basemap (Plotly's `scattermap`
     // trace, available since plotly.js v2.35.0). Three keyless raster tile
-    // providers are wired in via `layout.map.layers` and a Plotly updatemenu
-    // button bar lets the user swap between Road / Satellite / Topo at runtime.
+    // providers are wired in via `layout.map.layers`, and the user swaps
+    // between Road / Satellite / Topo at runtime.
     //
-    // A second updatemenu colors the trail by a chosen per-sample metric
-    // (HR / speed / altitude / cadence / power) using a 12-stop Viridis
-    // gradient. Since MapLibre line traces don't support per-vertex color, we
-    // precompute one trace per (metric × bucket) and toggle visibility via
-    // restyle.
+    // The trail can also be colored by a chosen per-sample metric (HR / speed /
+    // altitude / cadence / power) using a 12-stop Viridis gradient. Since
+    // MapLibre line traces don't support per-vertex color, we precompute one
+    // trace per (metric × bucket) and toggle visibility via restyle.
+    //
+    // Both option sets are shipped as plain payload data (`map_styles` and
+    // `color_modes`) and rendered as an HTML toolbar by charts.js. They were
+    // Plotly `updatemenus` originally; see the note at the mapStyles literal
+    // below for why they aren't any more.
 
     /// One GPS row from `activity_records`, with all the per-sample metrics
     /// we know how to color a polyline by.
@@ -1428,7 +1432,7 @@ public enum PlotlyEncoder {
     }
 
     /// Per-sample metric the user can color the trail by. The order here is
-    /// the order the buttons appear in the "Color by" updatemenu.
+    /// the order the tabs appear in the toolbar's route-color group.
     private enum GPSMetric: CaseIterable {
         case heartRate, speed, altitude, cadence, power
 
@@ -1905,66 +1909,46 @@ public enum PlotlyEncoder {
             return vis
         }
 
-        // 10. Tile-style updatemenu — relayout `map.layers` between providers.
+        // 10. Map-style options — the JS toolbar relayouts `map.layers` between
+        //     providers. These used to be a Plotly `updatemenus` button bar, but
+        //     Plotly lays those out in paper coordinates from measured SVG text
+        //     width, so the right-anchored bar was re-positioned on every layout
+        //     pass and rode the very edge of the card. They're plain HTML tabs in
+        //     charts.js now; all Swift owes them is the layer config per style.
         let osmLayers = gpsTileLayers(.osm)
         let esriLayers = gpsTileLayers(.esri)
         let topoLayers = gpsTileLayers(.openTopo)
-        let tileMenu: [String: Any] = [
-            "type": "buttons",
-            "direction": "right",
-            "showactive": true,
-            "active": 0,
-            "x": 1.0, "xanchor": "right",
-            "y": 1.02, "yanchor": "bottom",
-            "pad": ["t": 2, "r": 4, "b": 2, "l": 4] as [String: Any],
-            "bgcolor": "#1e1e1e",
-            "bordercolor": "#444444",
-            "font": ["color": "#dddddd", "size": 10] as [String: Any],
-            "buttons": [
-                ["label": "Road",      "method": "relayout", "args": [["map.layers": osmLayers]]],
-                ["label": "Satellite", "method": "relayout", "args": [["map.layers": esriLayers]]],
-                ["label": "Topo",      "method": "relayout", "args": [["map.layers": topoLayers]]],
-            ] as [[String: Any]],
+        let mapStyles: [[String: Any]] = [
+            ["label": "Road",      "layers": osmLayers],
+            ["label": "Satellite", "layers": esriLayers],
+            ["label": "Topo",      "layers": topoLayers],
         ]
 
-        // 11. Color-by updatemenu — restyle `visible` across all traces.
-        var colorButtons: [[String: Any]] = [
-            [
-                "label": "Plain",
-                "method": "restyle",
-                "args": [["visible": visibility(forMetric: nil)]],
-            ]
+        // 11. Color-by options — the toolbar restyles `visible` across all traces.
+        //     Index 0 ("Plain") is the initial state the traces are encoded in.
+        var colorModes: [[String: Any]] = [
+            ["label": "Plain", "visible": visibility(forMetric: nil)],
         ]
         for entry in metricRanges {
-            colorButtons.append([
+            colorModes.append([
                 "label": entry.metric.label,
-                "method": "restyle",
-                "args": [["visible": visibility(forMetric: entry.metric)]],
+                "visible": visibility(forMetric: entry.metric),
             ])
         }
-        let colorMenu: [String: Any] = [
-            "type": "buttons",
-            "direction": "right",
-            "showactive": true,
-            "active": 0,
-            "x": 0.0, "xanchor": "left",
-            "y": 1.02, "yanchor": "bottom",
-            "pad": ["t": 2, "r": 4, "b": 2, "l": 4] as [String: Any],
-            "bgcolor": "#1e1e1e",
-            "bordercolor": "#444444",
-            "font": ["color": "#dddddd", "size": 10] as [String: Any],
-            "buttons": colorButtons,
-        ]
 
         // 12. Layout. Note `map` (singular) — Plotly v2.35+ MapLibre namespace,
         //     NOT the deprecated `mapbox`.
+        //
+        //     No `title` and no margins: the card's own `<h2>Route</h2>` heading
+        //     labels it, and the HTML toolbar above the plot div now holds the
+        //     controls that the 60px top margin used to reserve room for. Letting
+        //     the map fill its div edge-to-edge is also what stops anything from
+        //     spilling past the card's rounded corners.
+        //
+        //     No `height` either — `.gps-plot` in style.css owns it, so the
+        //     expand/collapse toggle is a pure CSS class swap plus a
+        //     `Plotly.Plots.resize`. `config.responsive: true` tracks the div.
         let layout: [String: Any] = [
-            "title": [
-                "text": "GPS trail",
-                "font": ["color": "#dddddd", "size": 14] as [String: Any],
-                "x": 0.5, "xanchor": "center",
-                "y": 0.99, "yref": "container", "yanchor": "top",
-            ] as [String: Any],
             "paper_bgcolor": "rgba(0,0,0,0)",
             "map": [
                 "style": "white-bg",
@@ -1972,14 +1956,8 @@ public enum PlotlyEncoder {
                 "zoom": zoom,
                 "layers": osmLayers,
             ] as [String: Any],
-            // Small left/right margins so the updatemenu button bars (color
-            // tabs on the left, tile-style tabs on the right) live in a
-            // stable margin area instead of riding the very edge of the
-            // SVG, where sub-pixel resize jitter can clip them.
-            "margin": ["l": 8, "r": 8, "t": 60, "b": 0] as [String: Any],
-            "height": 560,
+            "margin": ["l": 0, "r": 0, "t": 0, "b": 0] as [String: Any],
             "showlegend": false,
-            "updatemenus": [tileMenu, colorMenu],
             "hoverlabel": [
                 "bgcolor": "#1e1e1e",
                 "bordercolor": "#444444",
@@ -2028,6 +2006,8 @@ public enum PlotlyEncoder {
             "layout": layout,
             "config": defaultConfig,
             "trim_targets": trimTargets,
+            "map_styles": mapStyles,
+            "color_modes": colorModes,
         ]
     }
 

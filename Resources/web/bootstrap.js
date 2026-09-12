@@ -27,8 +27,12 @@
             // Plotly charts that were laid out while their parent section was
             // display:none come back with bogus dimensions. Force a relayout
             // pass on every chart slot inside the just-shown section.
+            //
+            // `.gps-plot` is in the selector because the Route card is a
+            // shell — its slot holds a toolbar plus the actual Plotly div —
+            // so the slot itself never carries `.data`.
             requestAnimationFrame(function () {
-                target.querySelectorAll('.chart-slot').forEach(function (slot) {
+                target.querySelectorAll('.chart-slot, .gps-plot').forEach(function (slot) {
                     if (slot && slot.data && window.Plotly) {
                         try { Plotly.Plots.resize(slot); } catch (e) { /* ignore */ }
                     }
