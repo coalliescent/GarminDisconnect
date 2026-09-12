@@ -27,6 +27,7 @@ garmindisconnect/
 ├── Tests/               unit tests + tiny.db fixture
 ├── Makefile             thin wrapper: `make`, `make run`, `make test`
 ├── tools/make_icon.py   packages Resources/icon/png/ into Resources/AppIcon.icns
+├── tools/mac_build.sh   build on a remote Mac over ssh (for non-Mac development)
 ├── build.sh             all real build work (swiftc + stage bundle + embed pylib + launch)
 └── garmin-dump/         co-located Python dependency (the sync tool)
     ├── pyproject.toml
@@ -61,6 +62,42 @@ libmtp installed.
 The build-time `garmin-dump/.venv` is used only for `pip` (to populate the
 bundle) and for `make test-dep` (pytest). The viewer does not touch it at
 runtime.
+
+### Building from a machine that isn't a Mac
+
+The viewer cannot be compiled anywhere but macOS — `Sources/` uses AppKit and
+WebKit, and both `build.sh` and `Tests/run_tests.sh` shell out to `xcrun`. If
+you develop on Linux, `tools/mac_build.sh` rsyncs the tree to a Mac over ssh
+and builds it there:
+
+```sh
+cp tools/mac_build.local.env.example tools/mac_build.local.env
+$EDITOR tools/mac_build.local.env   # set MAC_BUILD_HOST=user@host
+
+make mac-build                     # rsync + build the bundle
+make mac-test                      # ...and run all four suites
+MAC_BUILD_HOST=you@mac.local make mac-build   # one-off, overrides the file
+tools/mac_build.sh --clean --tests # cold build from scratch
+```
+
+Which Mac you build on is a property of your machines rather than of this
+project, so there is no default and nothing about it is committed:
+`MAC_BUILD_HOST` comes from your environment or from
+`tools/mac_build.local.env`, which is git-ignored (the `.example` template
+beside it is what's tracked). The environment wins over the file.
+
+The remote tree is a scratch copy (`~/build/GarminDisconnect` by default);
+`build/` and `garmin-dump/.venv` are kept between runs, so a repeat build takes
+seconds. The remote host needs a Swift toolchain and a python3 >= 3.12 on the
+*non-interactive* ssh PATH — `ssh host cmd` sources only `~/.zshenv`, so a
+Homebrew python needs `export PATH=/opt/homebrew/bin:$PATH` there or build.sh's
+venv step picks up the system 3.9 and fails.
+
+`make test-all` runs the viewer, ingester, icon and build-tooling suites
+together and reports each one rather than stopping at the first failure. It
+needs macOS; it's what `make mac-test` runs on the far side. `make test-tools`
+alone (the build tooling's own tests, including a check that no build-host
+details have been committed) runs anywhere python3 does.
 
 ## Usage
 

@@ -2,6 +2,9 @@
 build/
 *.dSYM
 
+# Scratch git worktrees (agents and humans branch into here)
+.worktrees/
+
 # macOS
 .DS_Store
 
@@ -28,6 +31,11 @@ __pycache__/
 htmlcov/
 .venv/
 venv/
+
+# Deployment-specific build config (which Mac `make mac-build` rsyncs to).
+# Host details are not project facts and must not be committed (#254) — see
+# tools/mac_build.local.env.example for the template, which is tracked.
+tools/mac_build.local.env
 
 # IDE
 .vscode/
