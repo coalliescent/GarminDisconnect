@@ -103,6 +103,18 @@ public enum PlotlyEncoder {
         ]
     }
 
+    /// Build a payload for a control that does not apply right now, and whose
+    /// absence needs no explaining. The JS empties the slot and hides it (and
+    /// its `.chart-grid` row, if nothing else in the row is visible), so the
+    /// page reflows as though the control were never there — unlike
+    /// `emptyPayload`, which leaves a card-sized box holding a message.
+    public static func hiddenPayload(chartID: String) -> [String: Any] {
+        return [
+            "chart": chartID,
+            "chart_hidden": true,
+        ]
+    }
+
     // MARK: - Helpers
 
     private static let groupingFormatter: NumberFormatter = {
@@ -1302,17 +1314,13 @@ public enum PlotlyEncoder {
         let chartID = "activity-trim-controls"
         // Trims are stored per activity, in that activity's own elapsed-second
         // coordinates, and the timeline widget edits exactly one of them. Rather
-        // than invent a group-wide trim model, multi-selection hides the control
-        // and says so. Trims already saved on the members are still *applied* to
-        // every chart above — they just can't be edited until the user narrows
-        // the selection back to one activity.
+        // than invent a group-wide trim model, multi-selection drops the control
+        // entirely — a note explaining the absence cost more vertical space than
+        // the control it replaced (#261). Trims already saved on the members are
+        // still *applied* to every chart above — they just can't be edited until
+        // the user narrows the selection back to one activity.
         guard group.members.count == 1 else {
-            return emptyPayload(
-                chartID: chartID,
-                message: group.members.isEmpty
-                    ? "No activity selected"
-                    : "Trim applies to one activity at a time — select a single activity to adjust it."
-            )
+            return hiddenPayload(chartID: chartID)
         }
         let activityID = group.members[0].activityID
         // Intentionally NOT trim-filtered: the timeline always shows the full

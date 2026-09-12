@@ -274,6 +274,47 @@
 
     // ---- Empty-state placeholder ----------------------------------------
 
+    /// Hide a chart slot outright: no card, no message, no space. Used for a
+    /// control that simply doesn't apply to the current selection, where a
+    /// note explaining the absence would cost more room than the control
+    /// (e.g. trim under a multi-activity selection, #261).
+    ///
+    /// Slots usually sit alone in a `.chart-grid` row that carries its own
+    /// gap and bottom margin, so hiding only the slot would leave a visible
+    /// hole. `syncGridVisibility` hides the row too once every slot in it is
+    /// hidden, and brings it back as soon as one isn't.
+    function renderHidden(chartId) {
+        const el = document.getElementById('chart-' + chartId);
+        if (!el) return;
+        if (window.Plotly && el.data) {
+            try { Plotly.purge(el); } catch (e) { /* ignore */ }
+        }
+        el.innerHTML = '';
+        el.classList.add('hidden');
+        syncGridVisibility(el);
+    }
+
+    /// Re-show a slot hidden by a previous `renderHidden`. Called on every
+    /// non-hidden payload, so the slot reappears the moment it has content.
+    function unhideSlot(chartId) {
+        const el = document.getElementById('chart-' + chartId);
+        if (!el || !el.classList.contains('hidden')) return;
+        el.classList.remove('hidden');
+        syncGridVisibility(el);
+    }
+
+    /// Hide/show a slot's `.chart-grid` row to match its children: hidden iff
+    /// every element child is hidden. Rows that aren't `.chart-grid` (the
+    /// activity summary card, the sidebar) are left alone.
+    function syncGridVisibility(el) {
+        const row = el.parentElement;
+        if (!row || !row.classList.contains('chart-grid')) return;
+        const anyVisible = Array.prototype.some.call(
+            row.children, function (c) { return !c.classList.contains('hidden'); }
+        );
+        row.classList.toggle('hidden', !anyVisible);
+    }
+
     function renderEmpty(chartId, message) {
         const slotId = 'chart-' + chartId;
         let el = document.getElementById(slotId);
@@ -309,6 +350,12 @@
         } else {
             removeWindowControls(chartId);
         }
+
+        if (payload.chart_hidden) {
+            renderHidden(chartId);
+            return;
+        }
+        unhideSlot(chartId);
 
         if (payload.chart_empty) {
             renderEmpty(chartId, payload.message);

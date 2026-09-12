@@ -104,8 +104,13 @@ enum TabLoaders {
             "activity-gps-map", "activity-trim-controls",
         ]
         guard !activityIDs.isEmpty else {
-            return detailCharts.map {
-                PlotlyEncoder.emptyPayload(chartID: $0, message: "No activity selected")
+            // The trim control is hidden rather than emptied, exactly as it is
+            // for a multi-activity selection (#261) — there is nothing useful
+            // to say in a box that size.
+            return detailCharts.map { chart in
+                chart == "activity-trim-controls"
+                    ? PlotlyEncoder.hiddenPayload(chartID: chart)
+                    : PlotlyEncoder.emptyPayload(chartID: chart, message: "No activity selected")
             }
         }
         var trims: [Int: TrimState] = [:]

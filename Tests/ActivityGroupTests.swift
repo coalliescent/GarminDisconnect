@@ -364,12 +364,22 @@ private func testTrimControlsAreSingleActivityOnly() throws {
     try expectEqual(single["total_elapsed_s"] as? Int ?? -1, 29)
     try expectEqual((single["segments"] as? [[String: Any]] ?? []).count, 1)
 
+    // Multi-selection drops the control entirely rather than leaving a
+    // card-sized box explaining itself: `chart_hidden` tells the JS to hide
+    // the slot, so the page goes straight from the map to Metrics (#261).
     let group = PlotlyEncoder.activityTrimControls(
         group: try ActivityGroup.load(db: db, activityIDs: [run, walk])
     )
-    try expectEqual(group["chart_empty"] as? Bool ?? false, true)
-    try expect((group["message"] as? String ?? "").contains("one activity at a time"),
-               "the empty state should explain why, not just be blank")
+    try expectEqual(group["chart_hidden"] as? Bool ?? false, true)
+    try expect(group["chart_empty"] == nil, "hidden is not the same as empty")
+    try expect(group["message"] == nil, "a hidden slot must carry no help text")
+
+    // An empty selection hides it the same way.
+    let none = PlotlyEncoder.activityTrimControls(
+        group: try ActivityGroup.load(db: db, activityIDs: [])
+    )
+    try expectEqual(none["chart_hidden"] as? Bool ?? false, true)
+    try expect(none["message"] == nil, "a hidden slot must carry no help text")
 }
 
 private func testTrimControlsUseTheMemberClockNotTheGroupClock() throws {

@@ -30,6 +30,7 @@ run "viewer (Swift)"      bash Tests/run_tests.sh
 run "garmin-dump (pytest)" make test-dep
 run "icon assembler"       make test-icon
 run "build tooling"        make test-tools
+run "viewer (JS)"          make test-js
 
 echo
 echo "===== summary ====="

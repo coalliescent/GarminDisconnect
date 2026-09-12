@@ -8,7 +8,7 @@
 ROOT      := $(shell pwd)
 BUILD_DIR := $(ROOT)/build
 
-.PHONY: all bundle run clean test test-all test-dep icon test-icon test-tools mac-build mac-test help
+.PHONY: all bundle run clean test test-all test-dep test-js icon test-icon test-tools mac-build mac-test help
 
 all: bundle
 
@@ -21,6 +21,7 @@ help:
 	@echo "  make test        run viewer unit tests against Tests/fixtures/tiny.db"
 	@echo "  make test-dep    run garmin-dump's pytest suite"
 	@echo "  make test-icon   run the icon assembler's tests (no macOS needed)"
+	@echo "  make test-js     run the viewer JS DOM tests (needs node, no macOS)"
 	@echo "  make test-tools  run the build-tooling tests (no macOS needed)"
 	@echo "  make test-all    run every suite, reporting each (needs macOS)"
 	@echo '  make mac-build   rsync to $$MAC_BUILD_HOST and build there'
@@ -62,6 +63,16 @@ test-icon:
 # with stubbed rsync/ssh, so no Mac and no remote host are involved.
 test-tools:
 	@python3 tools/test_mac_build.py
+
+# The viewer's JS that is pure DOM logic (chart-slot visibility), driven
+# through a stub document in plain node — no browser, no macOS, no npm. Skips
+# itself if node isn't installed rather than failing a suite that can't run.
+test-js:
+	@if command -v node >/dev/null 2>&1; then \
+	  node Tests/js/test_chart_visibility.js; \
+	else \
+	  echo "node not installed; skipping the JS tests"; \
+	fi
 
 # garmin-dump's own pytest suite — separate concern from the viewer tests.
 # The venv is created by build.sh on first `make`; this target assumes it
