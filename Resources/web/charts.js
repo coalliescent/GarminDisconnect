@@ -104,6 +104,7 @@
             el._gpdTrimTargets = p.trim_targets;
         }
         installGPSMapHandlers();
+        installGPSMarkerIcons(el, 90);
     }
     function renderActivityTrimControls(p) {
         installTrimControls(p);
@@ -232,6 +233,128 @@
                     btn.classList.toggle('gpd-active-button', bIdx === activeIdx);
                 });
             });
+        }
+    }
+
+    // ---- Map badges (start / pause / stop) ------------------------------
+
+    /// Diameter of a badge in CSS pixels, and the factor its artwork is
+    /// painted at. 2 keeps the hairlines crisp on the retina displays this
+    /// app runs on; MapLibre scales the image back down on a 1x screen.
+    ///
+    /// This is the ONLY place the badge size is set. PlotlyEncoder sends
+    /// `marker.size: 10`, which Plotly turns into `icon-size: 1.0` — i.e.
+    /// "draw it at the size it was painted".
+    var GPD_BADGE_PX = 13;
+    var GPD_BADGE_SCALE = 2;
+
+    /// The three badges, keyed by the `marker.symbol` the Swift side asks
+    /// for, as [glyph, disc colour].
+    var GPD_BADGES = {
+        'gpd-start': ['play',  '#22c55e'],  // green-500
+        'gpd-stop':  ['stop',  '#ef4444'],  // red-500
+        'gpd-pause': ['pause', '#1e1e1e'],
+    };
+
+    /// Paint one badge: a coloured disc with a hairline black outline and a
+    /// white glyph inside, itself hairline-outlined in black. Returns
+    /// ImageData ready for `map.addImage`.
+    ///
+    /// Everything is drawn fully opaque — the 60% is applied by MapLibre via
+    /// `icon-opacity` (from the trace's `marker.opacity`), so the whole badge
+    /// fades together and the map reads through all of it.
+    function gpdPaintMarkerIcon(glyph, fill) {
+        var d = GPD_BADGE_PX;
+        var canvas = document.createElement('canvas');
+        canvas.width = canvas.height = d * GPD_BADGE_SCALE;
+        var g = canvas.getContext('2d');
+        g.scale(GPD_BADGE_SCALE, GPD_BADGE_SCALE);
+        var c = d / 2;
+
+        g.lineJoin = 'round';
+        g.strokeStyle = '#000000';
+
+        // Disc. The radius leaves room for the outline to sit inside the
+        // canvas instead of being clipped by its edge.
+        g.beginPath();
+        g.arc(c, c, d / 2 - 0.75, 0, Math.PI * 2);
+        g.fillStyle = fill;
+        g.fill();
+        g.lineWidth = 1;
+        g.stroke();
+
+        // Glyph — the classic transport shapes.
+        g.fillStyle = '#ffffff';
+        g.lineWidth = 0.9;
+        g.beginPath();
+        if (glyph === 'play') {
+            // Nudged left of centre: a triangle's visual centre sits at a
+            // third of its width, not half.
+            g.moveTo(c - 2.2, c - 2.9);
+            g.lineTo(c + 2.6, c);
+            g.lineTo(c - 2.2, c + 2.9);
+            g.closePath();
+        } else if (glyph === 'stop') {
+            g.rect(c - 2.4, c - 2.4, 4.8, 4.8);
+        } else {
+            g.rect(c - 2.5, c - 2.6, 1.7, 5.2);
+            g.rect(c + 0.8, c - 2.6, 1.7, 5.2);
+        }
+        g.fill();
+        g.stroke();
+
+        return g.getImageData(0, 0, canvas.width, canvas.height);
+    }
+
+    /// Register the badge artwork with the map's MapLibre instance.
+    ///
+    /// Plotly asks MapLibre for an `icon-image` named "<marker.symbol>-15"
+    /// (the "-15" is its maki-icon convention, appended unconditionally), so
+    /// that is the name each image goes in under.
+    ///
+    /// Timing matters. If the symbol layer renders before its image exists,
+    /// MapLibre fires `styleimagemissing`, and Plotly answers that by
+    /// fetching `unpkg.com/maki@2.1.0/icons/<name>.svg` — a pointless network
+    /// round-trip that 404s for our names. So we grab the map as early as we
+    /// can (it doesn't exist yet when newPlot returns; hence the rAF retry)
+    /// and add the images on `style.load`, before the first symbol render.
+    /// The `styleimagemissing` handler is the belt to that braces: if we ever
+    /// are late, or MapLibre drops the images on a style change, they get
+    /// re-added on demand.
+    function installGPSMarkerIcons(el, tries) {
+        var map;
+        try {
+            map = el._fullLayout.map._subplot.map;
+        } catch (e) {
+            map = null;
+        }
+        if (!map) {
+            if (tries > 0) {
+                requestAnimationFrame(function () {
+                    installGPSMarkerIcons(el, tries - 1);
+                });
+            }
+            return;
+        }
+        if (map._gpdBadgesInstalled) return;
+        map._gpdBadgesInstalled = true;
+
+        function addBadges() {
+            Object.keys(GPD_BADGES).forEach(function (symbol) {
+                var id = symbol + '-15';
+                if (map.hasImage(id)) return;
+                var badge = GPD_BADGES[symbol];
+                map.addImage(id, gpdPaintMarkerIcon(badge[0], badge[1]), {
+                    pixelRatio: GPD_BADGE_SCALE,
+                });
+            });
+        }
+
+        map.on('styleimagemissing', addBadges);
+        if (map.isStyleLoaded()) {
+            addBadges();
+        } else {
+            map.once('style.load', addBadges);
         }
     }
 

@@ -1653,6 +1653,32 @@ public enum PlotlyEncoder {
         return pauses
     }
 
+    /// Marker dict for the three map badges: start, pause and stop.
+    ///
+    /// The artwork is painted onto a canvas by `gpdPaintMarkerIcon` in
+    /// charts.js and handed to MapLibre under `symbol`; nothing about the
+    /// badge's look is decided here. Two Plotly conversions matter:
+    ///
+    ///   - `marker.symbol` becomes an `icon-image` of "<symbol>-15", which
+    ///     is why the JS registers its images under that suffixed name.
+    ///   - `marker.size` becomes `icon-size: size / 10`, so **10 means
+    ///     "draw the icon at the natural size charts.js painted it"**.
+    ///     Resize the badge there, not here.
+    ///
+    /// `opacity` applies to the whole badge — disc, hairline outlines and
+    /// white glyph alike — so the map stays readable underneath it.
+    /// `allowoverlap` is essential: MapLibre hides colliding symbols by
+    /// default, and in a multi-leg group one member's stop badge often lands
+    /// within a few metres of the next member's start badge.
+    private static func badgeMarker(symbol: String) -> [String: Any] {
+        [
+            "symbol": symbol,
+            "size": 10,
+            "opacity": 0.6,
+            "allowoverlap": true,
+        ]
+    }
+
     /// The GPS trail for a group of one or more activities.
     ///
     /// Members are drawn as separate strokes of the same trail: the polyline
@@ -1775,27 +1801,23 @@ public enum PlotlyEncoder {
             }
         }
 
-        // 7. Pause markers — one "T" badge per detected gap > 10s *within* a
-        //    member. `mode: "markers+text"` draws a dark filled circle behind
-        //    a white "T" character. Always visible regardless of color mode.
+        // 7. Pause badges — one per detected gap > 10s *within* a member,
+        //    drawn as the classic two-bar pause glyph. Always visible
+        //    regardless of color mode.
+        //
+        //    This used to be a dark disc with a "T" typeset on top of it via
+        //    `mode: "markers+text"`. The disc rendered; the "T" never did.
+        //    MapLibre draws text from a glyph source, and the map's
+        //    "white-bg" style declares none — so the character was silently
+        //    dropped every time. The badge is artwork now, which sidesteps
+        //    glyphs entirely (see `badgeMarker`).
         let pauses = detectGPSPauses(samples: samples)
         let pauseTrace: [String: Any] = [
             "type": "scattermap",
             "lat": pauses.map { $0.lat },
             "lon": pauses.map { $0.lon },
-            "mode": "markers+text",
-            "marker": [
-                "size": 18,
-                "color": "#1e1e1e",
-                "opacity": 0.92,
-            ] as [String: Any],
-            "text": pauses.map { _ in "T" },
-            "textfont": [
-                "color": "#ffffff",
-                "size": 12,
-                "family": "ui-monospace, Menlo, monospace",
-            ] as [String: Any],
-            "textposition": "middle center",
+            "mode": "markers",
+            "marker": badgeMarker(symbol: "gpd-pause"),
             // Distinct hover text from the line samples — events still fire so
             // the corner legend shows it; pauses with longer gaps get a more
             // useful label than just "Paused".
@@ -1807,11 +1829,11 @@ public enum PlotlyEncoder {
             "visible": true,
         ]
 
-        // 8. Start / end markers — vivid green/red dots at the first and last
-        //    GPS sample of EVERY member. One activity gives the familiar
-        //    single pair; a stop/start or multi-day group shows one pair per
-        //    leg, which is exactly how the user reads where each file began
-        //    and ended.
+        // 8. Start / stop badges — a green play triangle and a red stop
+        //    square at the first and last GPS sample of EVERY member. One
+        //    activity gives the familiar single pair; a stop/start or
+        //    multi-day group shows one pair per leg, which is exactly how the
+        //    user reads where each file began and ended.
         var startLats: [Double] = [], startLons: [Double] = [], startLabels: [String] = []
         var endLats: [Double] = [], endLons: [Double] = [], endLabels: [String] = []
         for index in group.members.indices {
@@ -1830,11 +1852,7 @@ public enum PlotlyEncoder {
             "lat": startLats,
             "lon": startLons,
             "mode": "markers",
-            "marker": [
-                "size": 16,
-                "color": "#22c55e",  // green-500
-                "opacity": 1.0,
-            ] as [String: Any],
+            "marker": badgeMarker(symbol: "gpd-start"),
             "hoverinfo": "none",
             "hovertext": startLabels,
             "showlegend": false,
@@ -1845,11 +1863,7 @@ public enum PlotlyEncoder {
             "lat": endLats,
             "lon": endLons,
             "mode": "markers",
-            "marker": [
-                "size": 16,
-                "color": "#ef4444",  // red-500
-                "opacity": 1.0,
-            ] as [String: Any],
+            "marker": badgeMarker(symbol: "gpd-stop"),
             "hoverinfo": "none",
             "hovertext": endLabels,
             "showlegend": false,

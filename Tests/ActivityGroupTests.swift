@@ -405,6 +405,46 @@ private func testActivityListPayloadCarriesEverySelectedID() throws {
     try expectEqual(payload["selected_activity_ids"] as? [Int] ?? [], [run, walk])
 }
 
+/// The three always-on badge traces (pause / start / stop) must ask for the
+/// canvas-painted MapLibre icons installed by charts.js, not for a bare
+/// coloured dot. See `gpdInstallMarkerIcons` there: Plotly turns
+/// `marker.symbol` into an `icon-image` of "<symbol>-15", and `marker.size`
+/// into `icon-size: size / 10` — so size 10 means "draw the icon at the
+/// natural size charts.js painted it".
+private func testGPSMapBadgesUseThePaintedIcons() throws {
+    let db = try openFixture()
+    let run = try activityID(db, sport: "running")
+    let payload = PlotlyEncoder.activityGPSMap(
+        group: try ActivityGroup.load(db: db, activityIDs: [run])
+    )
+    let data = try traces(payload)
+    // Trailing trace order is [pause, start, end] — see activityGPSMap.
+    let expected = [
+        (offset: 3, symbol: "gpd-pause"),
+        (offset: 2, symbol: "gpd-start"),
+        (offset: 1, symbol: "gpd-stop"),
+    ]
+    for (offset, symbol) in expected {
+        let trace = data[data.count - offset]
+        let marker = trace["marker"] as? [String: Any] ?? [:]
+        try expectEqual(marker["symbol"] as? String ?? "", symbol)
+        try expectEqual(marker["size"] as? Int ?? 0, 10,
+                        "\(symbol) must render its icon at natural size")
+        // 60% opacity so the badge never hides the map underneath it.
+        try expect((marker["opacity"] as? Double ?? 0) == 0.6,
+                   "\(symbol) should be drawn at 60% opacity")
+        // MapLibre hides colliding symbols unless told not to, and in a
+        // multi-leg group a stop badge often lands metres from the next
+        // start badge.
+        try expect(marker["allowoverlap"] as? Bool == true,
+                   "\(symbol) must survive colliding with a neighbouring badge")
+        try expect(trace["mode"] as? String == "markers",
+                   "\(symbol) is an icon, not a text label")
+        try expect(trace["text"] == nil,
+                   "\(symbol) must not carry MapLibre text — the style has no glyph source")
+    }
+}
+
 // MARK: - Entry point (called by TestsMain)
 
 func runActivityGroupTests() -> (passed: Int, failed: Int) {
@@ -422,6 +462,7 @@ func runActivityGroupTests() -> (passed: Int, failed: Int) {
     test("hr zones sum across members",            testHRZonesSumsAcrossMembers)
     test("gps map marks every start and end",      testGPSMapMarksEveryMemberStartAndEnd)
     test("gps map breaks the trail between legs",  testGPSMapBreaksTheTrailBetweenMembers)
+    test("gps map badges use the painted icons",   testGPSMapBadgesUseThePaintedIcons)
     test("trim controls are single-activity only", testTrimControlsAreSingleActivityOnly)
     test("trim controls use the member clock",     testTrimControlsUseTheMemberClockNotTheGroupClock)
     test("activity list carries every selection",  testActivityListPayloadCarriesEverySelectedID)
