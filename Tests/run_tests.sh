@@ -40,12 +40,14 @@ swiftc \
     Sources/Data/DateUtil.swift \
     Sources/Data/ActivityTrim.swift \
     Sources/Data/ActivityGroup.swift \
+    Sources/Data/ActivitySelection.swift \
     Sources/Data/Queries.swift \
     Sources/Data/PlotlyEncoder.swift \
     Sources/Util/ChartWindow.swift \
     Tests/DatabaseTests.swift \
     Tests/DateUtilTests.swift \
     Tests/ActivityGroupTests.swift \
+    Tests/ActivitySelectionTests.swift \
     Tests/TestsMain.swift
 
 echo "running tests..."

@@ -16,6 +16,7 @@ struct TestsMain {
             ("Database", runDatabaseTests),
             ("DateUtil", runDateUtilTests),
             ("ActivityGroup", runActivityGroupTests),
+            ("ActivitySelection", runActivitySelectionTests),
         ]
 
         for suite in suites {

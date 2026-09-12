@@ -24,13 +24,14 @@ final class MainWindowController: NSWindowController, WebChartViewDelegate {
     private let contentContainer = NSView()
     private var welcomeView: WelcomeView?
     private var currentTab: Tab = .overview
-    /// Activity ids currently expanded in the Activities tab detail section.
+    /// Activities currently expanded in the Activities tab detail section,
+    /// along with the device they belong to.
     /// Usually one. Cmd+clicking rows in the sidebar adds to the set, and the
     /// detail pane then renders the whole group as if it were one activity —
     /// which is what it usually is, split across several files by a stop/start
     /// or by one-activity-per-day recording. Never empty once a tab visit has
     /// happened; cmd+clicking the last remaining row is a no-op in JS.
-    private var selectedActivityIDs: [Int] = []
+    private var selection = ActivitySelection()
 
     convenience init() {
         let initialFrame = NSRect(x: 0, y: 0, width: 1280, height: 800)
@@ -167,18 +168,17 @@ final class MainWindowController: NSWindowController, WebChartViewDelegate {
             // Default to the most recent activity if the user hasn't picked
             // one yet. Lets the right pane show real content on first visit
             // instead of just the insight strip + an empty detail section.
-            if selectedActivityIDs.isEmpty,
-               let recent = TabLoaders.mostRecentActivityID(db: db, deviceID: deviceID) {
-                selectedActivityIDs = [recent]
-            }
+            selection.selectIfEmpty(
+                TabLoaders.mostRecentActivityID(db: db, deviceID: deviceID), on: deviceID
+            )
             webChartView.render(TabLoaders.loadActivitiesInsights(db: db, deviceID: deviceID))
             webChartView.render(TabLoaders.loadActivities(
                 db: db, deviceID: deviceID,
-                selectedActivityIDs: selectedActivityIDs
+                selectedActivityIDs: selection.ids
             ))
-            if !selectedActivityIDs.isEmpty {
+            if !selection.isEmpty {
                 webChartView.render(
-                    TabLoaders.loadActivityDetail(db: db, activityIDs: selectedActivityIDs)
+                    TabLoaders.loadActivityDetail(db: db, activityIDs: selection.ids)
                 )
             }
         case .wellness:
@@ -222,6 +222,10 @@ final class MainWindowController: NSWindowController, WebChartViewDelegate {
 
     @objc private func selectedDeviceChanged(_ note: Notification) {
         toolbarBuilder.refreshDevicePicker()
+        // The selected activities belong to the device we're leaving, so they
+        // can't be carried across — loadCurrentTab() will fall back to the new
+        // device's most recent activity instead (#257).
+        selection.retarget(to: AppState.shared.selectedDeviceID)
         loadCurrentTab()
     }
 
@@ -366,19 +370,16 @@ final class MainWindowController: NSWindowController, WebChartViewDelegate {
         } else if let aid = payload["activity_id"] as? Int {
             ids = [aid]
         }
-        // Drop duplicates but keep order, so the group is stable across
-        // repeated cmd+clicks.
-        var seen = Set<Int>()
-        selectedActivityIDs = ids.filter { seen.insert($0).inserted }
-        guard !selectedActivityIDs.isEmpty else { return }
+        selection.select(ids, on: AppState.shared.selectedDeviceID)
+        guard !selection.isEmpty else { return }
         renderActivityDetail()
     }
 
     /// Re-render the activity-detail charts for the current selection.
     private func renderActivityDetail() {
-        guard let db = AppState.shared.database, !selectedActivityIDs.isEmpty else { return }
+        guard let db = AppState.shared.database, !selection.isEmpty else { return }
         webChartView.render(
-            TabLoaders.loadActivityDetail(db: db, activityIDs: selectedActivityIDs)
+            TabLoaders.loadActivityDetail(db: db, activityIDs: selection.ids)
         )
     }
 
