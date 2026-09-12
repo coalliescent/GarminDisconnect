@@ -405,6 +405,15 @@ main#content {
     font-size: 11px;
     margin-top: 4px;
 }
+/* Discoverability for multi-select: nothing else in the UI hints that the
+   list takes more than one row at a time. */
+.activity-list-hint {
+    color: var(--fg-dim);
+    font-size: 10px;
+    text-align: center;
+    padding: 10px 8px 14px;
+    opacity: 0.65;
+}
 
 /* ---- Sync panel ---- */
 .sync-panel {

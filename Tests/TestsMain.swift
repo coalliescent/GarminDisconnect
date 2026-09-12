@@ -15,6 +15,7 @@ struct TestsMain {
         let suites: [(name: String, run: () -> (passed: Int, failed: Int))] = [
             ("Database", runDatabaseTests),
             ("DateUtil", runDateUtilTests),
+            ("ActivityGroup", runActivityGroupTests),
         ]
 
         for suite in suites {

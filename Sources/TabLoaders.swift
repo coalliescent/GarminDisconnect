@@ -47,20 +47,20 @@ enum TabLoaders {
     /// lives on the Overview tab now; the Activities tab is just the
     /// sidebar list + selected-activity detail.
     ///
-    /// `selectedActivityID` is forwarded to the JS list renderer so the row
-    /// matching the currently-selected activity carries the `.selected`
-    /// class on first paint (without it the auto-selected default activity
-    /// would have no visual indicator in the sidebar).
+    /// `selectedActivityIDs` is forwarded to the JS list renderer so each
+    /// selected row carries the `.selected` class on first paint (without it
+    /// the auto-selected default activity would have no visual indicator in
+    /// the sidebar). More than one id means a cmd+clicked group.
     static func loadActivities(
         db: Database,
         deviceID: Int,
-        selectedActivityID: Int? = nil
+        selectedActivityIDs: [Int] = []
     ) -> [[String: Any]] {
         return [
             tryEncode(chart: "activity-list") {
                 try PlotlyEncoder.activityListPayload(
                     from: db, deviceID: deviceID,
-                    selectedActivityID: selectedActivityID
+                    selectedActivityIDs: selectedActivityIDs
                 )
             },
         ]
@@ -90,28 +90,54 @@ enum TabLoaders {
     }
 
     /// Build payloads for the activity-detail sub-section. Called when the
-    /// user clicks an activity-list row.
+    /// user clicks (or cmd+clicks) activity-list rows.
     ///
-    /// Resolves the trim once (load existing or run autotrim heuristic on
-    /// first view) and passes it into each encoder so all four payloads
-    /// agree on what's clipped.
-    static func loadActivityDetail(db: Database, activityID: Int) -> [[String: Any]] {
-        let trim = resolveActivityTrim(db: db, activityID: activityID)
+    /// Resolves each activity's trim once (load existing or run the autotrim
+    /// heuristic on first view), stitches the selected activities into one
+    /// `ActivityGroup`, and passes that group to every encoder — so all five
+    /// payloads agree both on what's clipped and on how the members are
+    /// chained together. A single selected activity is a group of one and
+    /// renders exactly as it always did.
+    static func loadActivityDetail(db: Database, activityIDs: [Int]) -> [[String: Any]] {
+        let detailCharts = [
+            "activity-summary-card", "activity-pace-altitude", "activity-hr-zones",
+            "activity-gps-map", "activity-trim-controls",
+        ]
+        guard !activityIDs.isEmpty else {
+            return detailCharts.map {
+                PlotlyEncoder.emptyPayload(chartID: $0, message: "No activity selected")
+            }
+        }
+        var trims: [Int: TrimState] = [:]
+        for id in activityIDs {
+            if let trim = resolveActivityTrim(db: db, activityID: id) {
+                trims[id] = trim
+            }
+        }
+        let group: ActivityGroup
+        do {
+            group = try ActivityGroup.load(db: db, activityIDs: activityIDs, trims: trims)
+        } catch {
+            print("TabLoaders.loadActivityDetail failed: \(error)")
+            return detailCharts.map {
+                PlotlyEncoder.emptyPayload(chartID: $0, message: "Failed to load: \(error)")
+            }
+        }
         return [
             tryEncode(chart: "activity-summary-card") {
-                try PlotlyEncoder.activitySummaryCard(from: db, activityID: activityID, trim: trim)
+                try PlotlyEncoder.activitySummaryCard(from: db, group: group)
             },
             tryEncode(chart: "activity-pace-altitude") {
-                try PlotlyEncoder.activityPaceAltitude(from: db, activityID: activityID, trim: trim)
+                PlotlyEncoder.activityPaceAltitude(group: group)
             },
             tryEncode(chart: "activity-hr-zones") {
-                try PlotlyEncoder.activityHRZones(from: db, activityID: activityID, trim: trim)
+                PlotlyEncoder.activityHRZones(group: group)
             },
             tryEncode(chart: "activity-gps-map") {
-                try PlotlyEncoder.activityGPSMap(from: db, activityID: activityID, trim: trim)
+                PlotlyEncoder.activityGPSMap(group: group)
             },
             tryEncode(chart: "activity-trim-controls") {
-                try PlotlyEncoder.activityTrimControls(from: db, activityID: activityID, trim: trim)
+                PlotlyEncoder.activityTrimControls(group: group)
             },
         ]
     }

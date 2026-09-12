@@ -143,8 +143,18 @@ public enum ActivityTrim {
         if trim.ranges.isEmpty { return [] }
         return rows.filter { row in
             guard let e = row.int("elapsed_s") else { return false }
-            return trim.ranges.contains { e >= $0.startElapsedS && e <= $0.endElapsedS }
+            return keeps(elapsedS: e, with: trim)
         }
+    }
+
+    /// Does `trim` keep a record at this within-activity elapsed second?
+    /// The row-level predicate behind `filter`, exposed so callers holding
+    /// something other than a `[Row]` (ActivityGroup) apply the same rule.
+    /// nil trim keeps everything; an empty range list keeps nothing.
+    public static func keeps(elapsedS: Int, with trim: TrimState?) -> Bool {
+        guard let trim = trim else { return true }
+        if trim.ranges.isEmpty { return false }
+        return trim.ranges.contains { elapsedS >= $0.startElapsedS && elapsedS <= $0.endElapsedS }
     }
 
     // MARK: Auto-trim heuristic

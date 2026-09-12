@@ -137,7 +137,19 @@
 
     /// Render the activity-list as a compact vertical list of cards. The
     /// Activities tab uses a sidebar layout, so we need a narrow renderer.
-    /// Payload: { chart: "activity-list", rows: [{activity_id, start, sport, distance, duration, avg_hr, training_load}, ...], selected_activity_id?: int }
+    ///
+    /// Selection is multi: a plain click selects one row, cmd+click (ctrl on
+    /// a non-Mac keyboard) adds or removes a row, and the whole selection is
+    /// posted to Swift, which renders the group in the detail pane as if it
+    /// were a single activity. One real outing is often several watch
+    /// activities — a stop/start mid-ride, or a multi-day trip recorded one
+    /// file per day — and this is how the user puts them back together.
+    ///
+    /// The DOM is the source of truth for what's selected: every handler reads
+    /// the current `.selected` rows rather than keeping a parallel array that
+    /// could drift out of sync across re-renders.
+    ///
+    /// Payload: { chart: "activity-list", rows: [{activity_id, start, sport, distance, duration, avg_hr, training_load}, ...], selected_activity_ids?: [int] }
     function renderActivityList(payload) {
         const slot = document.getElementById('chart-activity-list');
         if (!slot) return;
@@ -146,9 +158,9 @@
             slot.innerHTML = '<div class="empty-message">No activities yet.</div>';
             return;
         }
-        const selectedId = (payload.selected_activity_id != null)
-            ? Number(payload.selected_activity_id)
-            : null;
+        const selectedIds = Array.isArray(payload.selected_activity_ids)
+            ? payload.selected_activity_ids.map(Number)
+            : [];
         let html = '<ul class="activity-list">';
         for (const r of rows) {
             const sport = escapeHtml(r.sport || 'activity');
@@ -157,7 +169,7 @@
             const dur = r.duration && r.duration !== '—' ? escapeHtml(r.duration) : '';
             const hr = r.avg_hr && r.avg_hr !== '—' ? escapeHtml(r.avg_hr) : '';
             const meta = [dist, dur, hr].filter(Boolean).join(' • ');
-            const isSelected = selectedId != null && Number(r.activity_id) === selectedId;
+            const isSelected = selectedIds.indexOf(Number(r.activity_id)) !== -1;
             html += '<li class="activity-list-item' + (isSelected ? ' selected' : '') + '"'
                 +     ' data-activity-id="' + r.activity_id + '">'
                 + '<div class="ali-line1">'
@@ -168,28 +180,51 @@
                 + '</li>';
         }
         html += '</ul>';
+        html += '<div class="activity-list-hint">\u2318-click to combine activities</div>';
         slot.innerHTML = html;
 
-        // Scroll the auto-selected row into view so the user lands looking
+        // Scroll the first selected row into view so the user lands looking
         // at the selection rather than hunting for it. `nearest` keeps the
         // sidebar's scroll position calm if the row is already visible.
-        if (selectedId != null) {
+        if (selectedIds.length > 0) {
             const sel = slot.querySelector('.activity-list-item.selected');
             if (sel && typeof sel.scrollIntoView === 'function') {
                 sel.scrollIntoView({block: 'nearest'});
             }
         }
 
+        /// Every currently-selected activity id, in list order (newest first).
+        function currentSelection() {
+            return Array.prototype.slice
+                .call(slot.querySelectorAll('.activity-list-item.selected'))
+                .map(function (r) { return parseInt(r.getAttribute('data-activity-id'), 10); })
+                .filter(function (n) { return !isNaN(n); });
+        }
+
         // Wire up row click → post message to Swift.
         slot.querySelectorAll('.activity-list-item').forEach(function (li) {
-            li.addEventListener('click', function () {
-                slot.querySelectorAll('.activity-list-item')
-                    .forEach(r => r.classList.remove('selected'));
-                li.classList.add('selected');
+            li.addEventListener('click', function (ev) {
                 const aid = parseInt(li.getAttribute('data-activity-id'), 10);
-                if (!isNaN(aid)) {
-                    postToSwift({event: 'activitySelected', activity_id: aid});
+                if (isNaN(aid)) return;
+                if (ev.metaKey || ev.ctrlKey) {
+                    // Toggle — but never empty the selection. With nothing
+                    // selected the detail pane has nothing to draw, and the
+                    // user almost certainly meant to swap rather than clear.
+                    const wasSelected = li.classList.contains('selected');
+                    if (wasSelected && currentSelection().length <= 1) return;
+                    li.classList.toggle('selected');
+                } else {
+                    slot.querySelectorAll('.activity-list-item')
+                        .forEach(r => r.classList.remove('selected'));
+                    li.classList.add('selected');
                 }
+                const ids = currentSelection();
+                if (ids.length === 0) return;
+                postToSwift({
+                    event: 'activitySelected',
+                    activity_ids: ids,
+                    activity_id: ids[0],
+                });
             });
         });
     }

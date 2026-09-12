@@ -684,62 +684,104 @@ public enum PlotlyEncoder {
 
     public static func activitySummaryCard(
         from db: Database,
-        activityID: Int,
-        trim: TrimState? = nil
+        group: ActivityGroup
     ) throws -> [String: Any] {
         let chartID = "activity-summary-card"
-        guard let row = try db.queryOne("""
+        let ids = group.activityIDs
+        guard !ids.isEmpty else {
+            return emptyPayload(chartID: chartID, message: "No activity selected")
+        }
+        let placeholders = ids.map { _ in "?" }.joined(separator: ", ")
+        let rows = try db.query("""
             SELECT activity_id, start_time_utc, sport, sub_sport,
                    total_timer_s, total_distance_m, total_calories,
                    avg_hr, max_hr, avg_speed_mps, max_speed_mps,
                    total_ascent_m, training_load, intensity_factor
             FROM activities
-            WHERE activity_id = ?
-            """, bind: [.int(Int64(activityID))]) else {
-            return emptyPayload(chartID: chartID, message: "Activity not found")
+            WHERE activity_id IN (\(placeholders))
+            ORDER BY start_time_utc
+            """, bind: ids.map { .int(Int64($0)) })
+        guard !rows.isEmpty else {
+            return emptyPayload(
+                chartID: chartID,
+                message: ids.count > 1 ? "Activities not found" : "Activity not found"
+            )
         }
-        let sport = row.string("sport") ?? "—"
-        let subSport = row.string("sub_sport")
-        let startISO = row.string("start_time_utc") ?? ""
-        let dur = row.double("total_timer_s")
-        let dist = row.double("total_distance_m")
-        let cal = row.int("total_calories")
-        let avgHR = row.int("avg_hr")
-        let maxHR = row.int("max_hr")
-        let avgSpeed = row.double("avg_speed_mps")
-        let ascent = row.double("total_ascent_m")
-        let load = row.double("training_load")
-        let intensity = row.double("intensity_factor")
 
-        // Sport title — capitalize sport, append sub_sport (e.g. "Running ·
-        // Trail") when present and not redundant.
+        // --- Aggregate across the group -------------------------------------
+        // Sums ignore NULLs, and stay nil if *every* member was NULL, so a
+        // group where nobody recorded calories shows "—" rather than "0 kcal".
+        func sum(_ column: String) -> Double? {
+            let values = rows.compactMap { $0.double(column) }
+            return values.isEmpty ? nil : values.reduce(0, +)
+        }
+        /// Duration-weighted mean — the honest way to average a rate across
+        /// activities of different lengths. A 10-minute sprint at 170 bpm
+        /// shouldn't drag a 4-hour hike's average up by half the difference.
+        func weightedMean(_ column: String) -> Double? {
+            var num = 0.0, den = 0.0
+            for row in rows {
+                guard let v = row.double(column) else { continue }
+                let w = row.double("total_timer_s") ?? 1
+                num += v * max(w, 0.0001)
+                den += max(w, 0.0001)
+            }
+            return den > 0 ? num / den : nil
+        }
+
+        let dur = sum("total_timer_s")
+        let dist = sum("total_distance_m")
+        let cal = sum("total_calories").map { Int($0.rounded()) }
+        let ascent = sum("total_ascent_m")
+        let load = sum("training_load")
+        let avgHR = weightedMean("avg_hr").map { Int($0.rounded()) }
+        let maxHR = rows.compactMap { $0.int("max_hr") }.max()
+        let intensity = weightedMean("intensity_factor")
+        // Prefer distance/time over averaging the per-activity averages —
+        // it's the same number for a single activity and more correct for a
+        // group.
+        let avgSpeed: Double?
+        if let dist = dist, let dur = dur, dur > 0 {
+            avgSpeed = dist / dur
+        } else {
+            avgSpeed = weightedMean("avg_speed_mps")
+        }
+
+        // --- Title ----------------------------------------------------------
+        // One sport → the existing "Running · Trail" form. Several → join the
+        // distinct sports in the order they were performed.
+        var sports: [String] = []
+        for row in rows {
+            let s = (row.string("sport") ?? "—").lowercased()
+            if !sports.contains(s) { sports.append(s) }
+        }
         let sportTitle: String
-        if let sub = subSport, !sub.isEmpty, sub.lowercased() != sport.lowercased() {
-            sportTitle = "\(sport.capitalized) · \(sub.capitalized)"
+        if sports.count == 1 {
+            let sport = sports[0]
+            let sub = rows.first?.string("sub_sport")
+            if let sub = sub, !sub.isEmpty, sub.lowercased() != sport {
+                sportTitle = "\(sport.capitalized) · \(sub.capitalized)"
+            } else {
+                sportTitle = sport.capitalized
+            }
         } else {
-            sportTitle = sport.capitalized
-        }
-        // Date in local-zone short form. The activities table doesn't store a
-        // local-offset, so we display in the system zone — close enough for
-        // the user's own data on their own machine.
-        let dateText: String
-        if let d = Database.iso8601.date(from: startISO) {
-            let f = DateFormatter()
-            f.locale = Locale(identifier: "en_US_POSIX")
-            f.dateFormat = "EEE MMM d, h:mm a"
-            dateText = f.string(from: d)
-        } else {
-            dateText = startISO
+            sportTitle = sports.map { $0.capitalized }.joined(separator: " + ")
         }
 
-        // Pace vs speed: use min/km pace for foot sports, km/h for everything
-        // else. Falls back to "—" when distance/time are missing or zero.
+        // --- Subtitle -------------------------------------------------------
+        let firstISO = rows.first?.string("start_time_utc") ?? ""
+        let lastISO = rows.last?.string("start_time_utc") ?? ""
+        var dateText = activityDateLabel(firstISO)
+        if rows.count > 1 {
+            dateText += " – \(activityDateLabel(lastISO))"
+            dateText += " · \(rows.count) activities"
+        }
+
+        // --- Pace vs speed --------------------------------------------------
+        let paceSports: Set<String> = ["running", "walking", "hiking"]
+        let isPaceSport = !sports.isEmpty && sports.allSatisfy { paceSports.contains($0) }
         let paceOrSpeed: (label: String, value: String)
-        let isPaceSport = ["running", "walking", "hiking"].contains(sport.lowercased())
-        if isPaceSport,
-           let dist = dist, dist > 0,
-           let dur = dur, dur > 0
-        {
+        if isPaceSport, let dist = dist, dist > 0, let dur = dur, dur > 0 {
             let mins = dur / 60.0
             let pace = mins / (dist / 1000.0)
             let m = Int(pace)
@@ -751,62 +793,74 @@ public enum PlotlyEncoder {
             paceOrSpeed = ("Avg pace", "—")
         }
 
-        var rows: [[String: Any]] = []
-        rows.append([
+        var out: [[String: Any]] = []
+        out.append([
             "label": "Distance",
             "value": dist.map { String(format: "%.2f km", $0 / 1000) } ?? "—",
         ])
-        rows.append([
+        out.append([
             "label": "Duration",
             "value": dur.map { formatDuration($0) } ?? "—",
         ])
-        rows.append([
+        out.append([
             "label": paceOrSpeed.label, "value": paceOrSpeed.value,
         ])
-        rows.append([
+        out.append([
             "label": "Avg HR",
             "value": avgHR.map { "\($0) bpm" } ?? "—",
         ])
-        rows.append([
+        out.append([
             "label": "Max HR",
             "value": maxHR.map { "\($0) bpm" } ?? "—",
         ])
-        rows.append([
+        out.append([
             "label": "Ascent",
             "value": ascent.map { String(format: "%.0f m", $0) } ?? "—",
         ])
-        rows.append([
+        out.append([
             "label": "Calories",
             "value": cal.map { "\($0) kcal" } ?? "—",
         ])
-        rows.append([
+        out.append([
             "label": "Load",
             "value": load.map { String(format: "%.0f", $0) } ?? "—",
         ])
         if let intensity = intensity {
-            rows.append([
+            out.append([
                 "label": "Intensity",
                 "value": String(format: "%.2f", intensity),
             ])
         }
-        // Hint that a trim is active so the user sees that "Distance" /
-        // "Duration" reflect a clipped subset, not the raw activity.
-        if let trim = trim, !trim.ranges.isEmpty {
-            rows.append([
+        if rows.count > 1 {
+            out.append(["label": "Activities", "value": "\(rows.count)"])
+        }
+        // Hint that a trim is active so the user sees that the record-derived
+        // charts below reflect a clipped subset, not the raw activity.
+        if group.hasTrim {
+            out.append([
                 "label": "Trim",
-                "value": trim.auto ? "auto" : "manual",
+                "value": group.trimIsAuto ? "auto" : "manual",
             ])
         }
-
-        _ = trim  // unused; kept on the API surface so future trim-aware
-                  // numbers (e.g. a recomputed distance) can plug in here.
 
         return [
             "chart": chartID,
             "title": sportTitle,
             "subtitle": dateText,
-            "rows": rows,
+            "rows": out,
         ]
+    }
+
+    /// "Sat Apr 4, 8:00 AM" — an activity start in the system zone. The
+    /// activities table has no local-offset column, so we display in the
+    /// machine's zone, which is right for the user's own data on their own
+    /// Mac.
+    private static func activityDateLabel(_ iso: String) -> String {
+        guard let d = Database.iso8601.date(from: iso) else { return iso }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "EEE MMM d, h:mm a"
+        return f.string(from: d)
     }
 
     // MARK: - Activities / activity-list (HTML table, not Plotly)
@@ -814,7 +868,7 @@ public enum PlotlyEncoder {
     public static func activityListPayload(
         from db: Database,
         deviceID: Int,
-        selectedActivityID: Int? = nil
+        selectedActivityIDs: [Int] = []
     ) throws -> [String: Any] {
         let rows = try db.query(
             Queries.activitiesList,
@@ -839,9 +893,10 @@ public enum PlotlyEncoder {
             ])
         }
         var payload: [String: Any] = ["chart": "activity-list", "rows": out]
-        if let sel = selectedActivityID {
-            payload["selected_activity_id"] = sel
-        }
+        // Always an array — the JS renderer marks every listed id as selected.
+        // One id is the ordinary case; several means the user cmd+clicked a
+        // group and the detail pane below is showing them stitched together.
+        payload["selected_activity_ids"] = selectedActivityIDs
         return payload
     }
 
@@ -950,56 +1005,73 @@ public enum PlotlyEncoder {
 
     // MARK: - Activity detail / pace-altitude
 
-    public static func activityPaceAltitude(
-        from db: Database,
-        activityID: Int,
-        trim: TrimState? = nil
-    ) throws -> [String: Any] {
-        let allRows = try db.query(
-            Queries.activityRecords,
-            bind: [.int(Int64(activityID))]
-        )
-        let rows = ActivityTrim.filter(allRows, with: trim)
-        guard !rows.isEmpty else {
-            return emptyPayload(chartID: "activity-pace-altitude", message: "No records for this activity")
-        }
-        var distances: [Double] = []
-        var rawSpeeds: [Double?] = []
-        var rawHRs: [Double?] = []
-        var rawAlts: [Double?] = []
-        for row in rows {
-            let dist = row.double("distance_m") ?? 0
-            distances.append(dist / 1000.0)  // km
-            if let speed = row.double("speed_mps"), speed > 0 {
-                rawSpeeds.append(speed)
-            } else {
-                rawSpeeds.append(nil)
-            }
-            if let hr = row.int("heart_rate"), hr > 0 {
-                rawHRs.append(Double(hr))
-            } else {
-                rawHRs.append(nil)
-            }
-            rawAlts.append(row.double("altitude_m"))
+    /// Pace / altitude / speed / HR against cumulative distance.
+    ///
+    /// For a multi-activity group the x-axis is the group's cumulative
+    /// distance, each member's series is smoothed independently (so a rolling
+    /// mean never averages the end of Tuesday's ride into the start of
+    /// Wednesday's), the traces break at each member boundary, and a dotted
+    /// vertical rule marks where one activity handed over to the next.
+    public static func activityPaceAltitude(group: ActivityGroup) -> [String: Any] {
+        let chartID = "activity-pace-altitude"
+        guard !group.records.isEmpty else {
+            return emptyPayload(chartID: chartID, message: "No records for this activity")
         }
 
-        // Centered 15-sample rolling mean (≈15s at 1Hz). Speed is averaged
-        // first then converted to pace — averaging pace directly would bias
-        // toward slow samples since pace = 1/speed is non-linear, and brief
-        // stops blow it up to +∞. HR is mildly smoothed for visual parity.
-        let smoothedSpeeds = rollingMean(rawSpeeds, halfWindow: 7)
-        let smoothedHRs = rollingMean(rawHRs, halfWindow: 7)
+        var distances: [Any] = []
+        var paces: [Any] = []
+        var speedKmh: [Any] = []
+        var hrs: [Any] = []
+        var alts: [Any] = []
+        /// x positions (km) where a new member starts, for the boundary rules.
+        var boundaries: [Double] = []
 
-        let paces: [Any] = smoothedSpeeds.map { s -> Any in
-            if let s = s, s > 0 { return 1000.0 / s / 60.0 }
-            return NSNull()
+        for index in group.members.indices {
+            let recs = group.records(ofMember: index)
+            if recs.isEmpty { continue }
+            if !distances.isEmpty {
+                // NSNull in both x and y breaks the polyline, so Plotly
+                // doesn't draw a phantom leg across the handover.
+                distances.append(NSNull())
+                paces.append(NSNull())
+                speedKmh.append(NSNull())
+                hrs.append(NSNull())
+                alts.append(NSNull())
+                boundaries.append((recs.first?.distanceM ?? 0) / 1000.0)
+            }
+
+            var rawSpeeds: [Double?] = []
+            var rawHRs: [Double?] = []
+            var rawAlts: [Double?] = []
+            for rec in recs {
+                distances.append((rec.distanceM ?? 0) / 1000.0)  // km
+                if let speed = rec.speedMps, speed > 0 {
+                    rawSpeeds.append(speed)
+                } else {
+                    rawSpeeds.append(nil)
+                }
+                if let hr = rec.heartRate, hr > 0 {
+                    rawHRs.append(Double(hr))
+                } else {
+                    rawHRs.append(nil)
+                }
+                rawAlts.append(rec.altitudeM)
+            }
+
+            // Centered 15-sample rolling mean (≈15s at 1Hz). Speed is averaged
+            // first then converted to pace — averaging pace directly would bias
+            // toward slow samples since pace = 1/speed is non-linear, and brief
+            // stops blow it up to +∞. HR is mildly smoothed for visual parity.
+            let smoothedSpeeds = rollingMean(rawSpeeds, halfWindow: 7)
+            let smoothedHRs = rollingMean(rawHRs, halfWindow: 7)
+
+            for s in smoothedSpeeds {
+                if let s = s, s > 0 { paces.append(1000.0 / s / 60.0) } else { paces.append(NSNull()) }
+                if let s = s { speedKmh.append(s * 3.6) } else { speedKmh.append(NSNull()) }
+            }
+            for h in smoothedHRs { hrs.append((h as Any?) ?? NSNull()) }
+            for a in rawAlts { alts.append((a as Any?) ?? NSNull()) }
         }
-        let speedKmh: [Any] = smoothedSpeeds.map { s -> Any in
-            if let s = s { return s * 3.6 }
-            return NSNull()
-        }
-        let hrs: [Any] = smoothedHRs.map { ($0 as Any?) ?? NSNull() }
-        let alts: [Any] = rawAlts.map { ($0 as Any?) ?? NSNull() }
 
         let pace_trace: [String: Any] = [
             "type": "scatter", "mode": "lines",
@@ -1038,7 +1110,9 @@ public enum PlotlyEncoder {
             "visible": false,
         ]
 
-        var layout = darkLayout(title: "Activity metrics", height: 320)
+        var layout = darkLayout(
+            title: group.isMulti ? "Group metrics" : "Activity metrics", height: 320
+        )
         // Reserve 8% of paper width on each side so the offset y3 (far left)
         // and y4 (far right) axes have room for their labels without
         // overlapping the data area.
@@ -1085,9 +1159,20 @@ public enum PlotlyEncoder {
         layout["margin"] = ["l": 70, "r": 70, "t": 70, "b": 40]
         // Checkboxes outside the chart act as the legend.
         layout["showlegend"] = false
+        if !boundaries.isEmpty {
+            layout["shapes"] = boundaries.map { x -> [String: Any] in
+                [
+                    "type": "line",
+                    "xref": "x", "yref": "paper",
+                    "x0": x, "x1": x, "y0": 0, "y1": 1,
+                    "line": ["color": "#777777", "width": 1, "dash": "dot"] as [String: Any],
+                    "layer": "below",
+                ]
+            }
+        }
 
         return [
-            "chart": "activity-pace-altitude",
+            "chart": chartID,
             "data": [pace_trace, alt_trace, speed_trace, hr_trace],
             "layout": layout,
             "config": defaultConfig,
@@ -1116,19 +1201,17 @@ public enum PlotlyEncoder {
 
     // MARK: - Activity detail / hr-zones
 
+    /// Minutes in each of Garmin's five %-max-HR zones. For a group this is
+    /// the sum across every member — the clock restarts at each member
+    /// boundary so the days-long gap between two legs of a multi-day trip
+    /// isn't mistaken for time spent in a zone.
     public static func activityHRZones(
-        from db: Database,
-        activityID: Int,
-        maxHR: Int = 190,
-        trim: TrimState? = nil
-    ) throws -> [String: Any] {
-        let allRows = try db.query(
-            Queries.activityRecords,
-            bind: [.int(Int64(activityID))]
-        )
-        let rows = ActivityTrim.filter(allRows, with: trim)
-        guard !rows.isEmpty else {
-            return emptyPayload(chartID: "activity-hr-zones", message: "No HR records for this activity")
+        group: ActivityGroup,
+        maxHR: Int = 190
+    ) -> [String: Any] {
+        let chartID = "activity-hr-zones"
+        guard !group.records.isEmpty else {
+            return emptyPayload(chartID: chartID, message: "No HR records for this activity")
         }
 
         // Garmin's standard 5-zone model by % max HR.
@@ -1142,12 +1225,16 @@ public enum PlotlyEncoder {
         var seconds: [Double] = Array(repeating: 0, count: bounds.count)
 
         // Approximate per-record duration as the spacing between samples (or 1s
-        // for the last record). Tracks Garmin's Z minutes well enough for v1.
+        // for the first record of each member). Tracks Garmin's Z minutes well
+        // enough for v1.
         var prevDate: Date?
-        for row in rows {
-            let hr = row.int("heart_rate")
-            let tsStr = row.string("timestamp_utc") ?? ""
-            let date = Database.iso8601.date(from: tsStr)
+        var prevMember = -1
+        for rec in group.records {
+            if rec.memberIndex != prevMember {
+                prevDate = nil
+                prevMember = rec.memberIndex
+            }
+            let date = Database.iso8601.date(from: rec.timestampISO)
             let elapsed: Double
             if let date = date, let prev = prevDate {
                 elapsed = max(0, min(60, date.timeIntervalSince(prev)))  // cap stalls
@@ -1155,7 +1242,7 @@ public enum PlotlyEncoder {
                 elapsed = 1
             }
             prevDate = date
-            guard let hr = hr else { continue }
+            guard let hr = rec.heartRate else { continue }
             let pct = Double(hr) / Double(maxHR)
             for (i, b) in bounds.enumerated() where pct >= b.lo && pct < b.hi {
                 seconds[i] += elapsed
@@ -1186,7 +1273,7 @@ public enum PlotlyEncoder {
         layout["yaxis"] = yaxis
 
         return [
-            "chart": "activity-hr-zones",
+            "chart": chartID,
             "data": [trace],
             "layout": layout,
             "config": defaultConfig,
@@ -1211,30 +1298,31 @@ public enum PlotlyEncoder {
     // timeline always shows the full activity so the user can drag a handle
     // back outward to undo a clip without resetting.
 
-    public static func activityTrimControls(
-        from db: Database,
-        activityID: Int,
-        trim: TrimState? = nil
-    ) throws -> [String: Any] {
+    public static func activityTrimControls(group: ActivityGroup) -> [String: Any] {
         let chartID = "activity-trim-controls"
-        let rows = try db.query(
-            Queries.activityRecords,
-            bind: [.int(Int64(activityID))]
-        )
-        guard !rows.isEmpty else {
+        // Trims are stored per activity, in that activity's own elapsed-second
+        // coordinates, and the timeline widget edits exactly one of them. Rather
+        // than invent a group-wide trim model, multi-selection hides the control
+        // and says so. Trims already saved on the members are still *applied* to
+        // every chart above — they just can't be edited until the user narrows
+        // the selection back to one activity.
+        guard group.members.count == 1 else {
+            return emptyPayload(
+                chartID: chartID,
+                message: group.members.isEmpty
+                    ? "No activity selected"
+                    : "Trim applies to one activity at a time — select a single activity to adjust it."
+            )
+        }
+        let activityID = group.members[0].activityID
+        // Intentionally NOT trim-filtered: the timeline always shows the full
+        // activity so the user can drag a handle back outward to undo a clip
+        // without resetting.
+        let pts = Array(group.allRecords(ofMember: 0))
+        guard !pts.isEmpty else {
             return emptyPayload(chartID: chartID, message: "No records for this activity")
         }
-
-        // Gather elapsed times + ISO timestamps for every record.
-        struct Pt { let elapsedS: Int; let ts: String }
-        var pts: [Pt] = []
-        pts.reserveCapacity(rows.count)
-        for row in rows {
-            guard let e = row.int("elapsed_s") else { continue }
-            let ts = row.string("timestamp_utc") ?? ""
-            pts.append(Pt(elapsedS: e, ts: ts))
-        }
-        guard let firstE = pts.first?.elapsedS, let lastE = pts.last?.elapsedS else {
+        guard let firstE = pts.first?.memberElapsedS, let lastE = pts.last?.memberElapsedS else {
             return emptyPayload(chartID: chartID, message: "No timing for this activity")
         }
 
@@ -1244,13 +1332,13 @@ public enum PlotlyEncoder {
         var segments: [[String: Any]] = []
         var segStart = firstE
         for i in 0..<(pts.count - 1) {
-            let gap = pts[i + 1].elapsedS - pts[i].elapsedS
+            let gap = pts[i + 1].memberElapsedS - pts[i].memberElapsedS
             if gap > gpsPauseGapSeconds {
                 segments.append([
                     "startS": segStart,
-                    "endS": pts[i].elapsedS,
+                    "endS": pts[i].memberElapsedS,
                 ])
-                segStart = pts[i + 1].elapsedS
+                segStart = pts[i + 1].memberElapsedS
             }
         }
         segments.append([
@@ -1268,8 +1356,8 @@ public enum PlotlyEncoder {
         var idx = 0
         while idx < pts.count {
             samples.append([
-                "elapsedS": pts[idx].elapsedS,
-                "ts": pts[idx].ts,
+                "elapsedS": pts[idx].memberElapsedS,
+                "ts": pts[idx].timestampISO,
             ])
             idx += stride
         }
@@ -1277,12 +1365,12 @@ public enum PlotlyEncoder {
         // with the reset position of the end handle.
         if let last = pts.last,
            let lastSampled = samples.last?["elapsedS"] as? Int,
-           lastSampled != last.elapsedS {
-            samples.append(["elapsedS": last.elapsedS, "ts": last.ts])
+           lastSampled != last.memberElapsedS {
+            samples.append(["elapsedS": last.memberElapsedS, "ts": last.timestampISO])
         }
 
         var trimDict: Any = NSNull()
-        if let trim = trim {
+        if let trim = group.members[0].trim {
             trimDict = [
                 "ranges": trim.ranges.map { ["startS": $0.startElapsedS, "endS": $0.endElapsedS] },
                 "auto": trim.auto,
@@ -1319,6 +1407,9 @@ public enum PlotlyEncoder {
     private struct GPSSample {
         let lat: Double
         let lon: Double
+        /// Index of the activity this sample came from within its group.
+        /// Lines, pauses and start/end markers all respect this boundary.
+        let memberIndex: Int
         let elapsedS: Int
         let altitudeM: Double?
         let distanceM: Double?
@@ -1499,6 +1590,9 @@ public enum PlotlyEncoder {
         for i in 0..<(samples.count - 1) {
             let s0 = samples[i]
             let s1 = samples[i + 1]
+            // Never bridge two activities — the segment between them isn't
+            // a stretch anyone travelled.
+            guard s0.memberIndex == s1.memberIndex else { continue }
             guard
                 let v0 = metric.value(of: s0),
                 let v1 = metric.value(of: s1)
@@ -1546,6 +1640,9 @@ public enum PlotlyEncoder {
     ) -> [(lat: Double, lon: Double, gapS: Int)] {
         var pauses: [(lat: Double, lon: Double, gapS: Int)] = []
         for i in 0..<(samples.count - 1) {
+            // A handover between two activities is not a pause — it gets a
+            // stop marker and a start marker instead.
+            guard samples[i].memberIndex == samples[i + 1].memberIndex else { continue }
             let gap = samples[i + 1].elapsedS - samples[i].elapsedS
             if gap > gpsPauseGapSeconds {
                 let midLat = (samples[i].lat + samples[i + 1].lat) / 2
@@ -1556,54 +1653,73 @@ public enum PlotlyEncoder {
         return pauses
     }
 
-    public static func activityGPSMap(
-        from db: Database,
-        activityID: Int,
-        trim: TrimState? = nil
-    ) throws -> [String: Any] {
+    /// The GPS trail for a group of one or more activities.
+    ///
+    /// Members are drawn as separate strokes of the same trail: the polyline
+    /// breaks at each handover (no phantom leg across the gap between
+    /// Tuesday's ride and Wednesday's), pause "T" badges are detected within a
+    /// member only, and — as the feature request asks — every member gets its
+    /// own green start dot and red end dot, so a route chained out of three
+    /// files shows three of each.
+    public static func activityGPSMap(group: ActivityGroup) -> [String: Any] {
         let chartID = "activity-gps-map"
-        let allRows = try db.query(
-            Queries.activityRecords,
-            bind: [.int(Int64(activityID))]
-        )
-        let rows = ActivityTrim.filter(allRows, with: trim)
 
-        // 1. Pull samples from rows. Drop rows without lat/lon — those are
-        //    valid activity records but useless for a map.
+        // 1. Pull samples from the group's records. Drop records without
+        //    lat/lon — those are valid activity records but useless for a map.
         var samples: [GPSSample] = []
-        samples.reserveCapacity(rows.count)
-        for row in rows {
-            guard
-                let lat = row.double("lat_deg"),
-                let lon = row.double("lon_deg")
-            else { continue }
+        samples.reserveCapacity(group.records.count)
+        for rec in group.records {
+            guard let lat = rec.latDeg, let lon = rec.lonDeg else { continue }
             samples.append(GPSSample(
                 lat: lat,
                 lon: lon,
-                elapsedS: row.int("elapsed_s") ?? 0,
-                altitudeM: row.double("altitude_m"),
-                distanceM: row.double("distance_m"),
-                speedMps: row.double("speed_mps"),
-                heartRate: row.int("heart_rate"),
-                cadence: row.int("cadence"),
-                powerW: row.int("power_w")
+                memberIndex: rec.memberIndex,
+                elapsedS: rec.elapsedS,
+                altitudeM: rec.altitudeM,
+                distanceM: rec.distanceM,
+                speedMps: rec.speedMps,
+                heartRate: rec.heartRate,
+                cadence: rec.cadence,
+                powerW: rec.powerW
             ))
         }
         guard samples.count >= 2 else {
-            return emptyPayload(chartID: chartID, message: "No GPS data for this activity")
+            return emptyPayload(
+                chartID: chartID,
+                message: group.isMulti
+                    ? "No GPS data for these activities"
+                    : "No GPS data for this activity"
+            )
         }
 
         // 2. Center + zoom from bounds (Mercator-aware).
         let (centerLat, centerLon, zoom) = mapBoundsToCenterZoom(samples: samples)
 
-        // 3. The always-on black outline trace. scattermap line traces have
+        // 3. Coordinate arrays for the two always-on traces, with an NSNull
+        //    inserted at every member boundary so the polyline breaks there
+        //    instead of drawing a straight line between two activities.
+        var lats: [Any] = []
+        var lons: [Any] = []
+        var hoverTexts: [Any] = []
+        var prevMember = -1
+        for s in samples {
+            if prevMember != -1 && s.memberIndex != prevMember {
+                lats.append(NSNull())
+                lons.append(NSNull())
+                hoverTexts.append("")
+            }
+            prevMember = s.memberIndex
+            lats.append(s.lat)
+            lons.append(s.lon)
+            hoverTexts.append(gpsHoverText(s))
+        }
+
+        // 4. The always-on black outline trace. scattermap line traces have
         //    no native stroke property, so we get a hairline outline by
         //    drawing a slightly wider black line UNDERNEATH everything else.
         //    With colored traces at width 3 above, an outline at width 5
         //    leaves a 1px hairline of black on each side — enough contrast
         //    against bright satellite imagery without dominating road tiles.
-        let lats = samples.map(\.lat)
-        let lons = samples.map(\.lon)
         let outlineTrace: [String: Any] = [
             "type": "scattermap",
             "lat": lats,
@@ -1615,7 +1731,7 @@ public enum PlotlyEncoder {
             "visible": true,
         ]
 
-        // 4. The always-on plain underlay, drawn over the outline. This trace
+        // 5. The always-on plain underlay, drawn over the outline. This trace
         //    serves two purposes:
         //    (a) it's the visual when no metric is selected ("Plain" mode),
         //    (b) it carries the per-point hovertext that drives the corner
@@ -1636,14 +1752,14 @@ public enum PlotlyEncoder {
             "mode": "lines+markers",
             "line": ["color": "#4ec9b0", "width": 3] as [String: Any],
             "marker": ["size": 4, "color": "#4ec9b0", "opacity": 0.85] as [String: Any],
-            "text": samples.map(gpsHoverText),
+            "text": hoverTexts,
             "hoverinfo": "none",
             "name": "route",
             "showlegend": false,
             "visible": true,
         ]
 
-        // 5. Build rainbow trace groups, one per available metric. Track the
+        // 6. Build rainbow trace groups, one per available metric. Track the
         //    rainbowTraces-relative range each metric occupies so we can
         //    construct visibility arrays for the "Color by" buttons.
         let metrics = availableGPSMetrics(samples: samples)
@@ -1651,17 +1767,17 @@ public enum PlotlyEncoder {
         var metricRanges: [(metric: GPSMetric, range: Range<Int>)] = []
         for metric in metrics {
             let start = rainbowTraces.count
-            let group = bucketedSegments(samples: samples, metric: metric, buckets: 12)
-            rainbowTraces.append(contentsOf: group)
+            let bucket = bucketedSegments(samples: samples, metric: metric, buckets: 12)
+            rainbowTraces.append(contentsOf: bucket)
             let end = rainbowTraces.count
             if end > start {
                 metricRanges.append((metric, start..<end))
             }
         }
 
-        // 6. Pause markers — one "T" badge per detected gap > 10s.
-        //    `mode: "markers+text"` draws a dark filled circle behind a white
-        //    "T" character. Always visible regardless of color mode.
+        // 7. Pause markers — one "T" badge per detected gap > 10s *within* a
+        //    member. `mode: "markers+text"` draws a dark filled circle behind
+        //    a white "T" character. Always visible regardless of color mode.
         let pauses = detectGPSPauses(samples: samples)
         let pauseTrace: [String: Any] = [
             "type": "scattermap",
@@ -1691,14 +1807,28 @@ public enum PlotlyEncoder {
             "visible": true,
         ]
 
-        // 7. Start / end markers — vivid green/red dots at samples[0] and
-        //    samples[last]. Drawn last so they sit on top of every line.
-        let startSample = samples.first!
-        let endSample = samples.last!
+        // 8. Start / end markers — vivid green/red dots at the first and last
+        //    GPS sample of EVERY member. One activity gives the familiar
+        //    single pair; a stop/start or multi-day group shows one pair per
+        //    leg, which is exactly how the user reads where each file began
+        //    and ended.
+        var startLats: [Double] = [], startLons: [Double] = [], startLabels: [String] = []
+        var endLats: [Double] = [], endLons: [Double] = [], endLabels: [String] = []
+        for index in group.members.indices {
+            let mine = samples.filter { $0.memberIndex == index }
+            guard let first = mine.first, let last = mine.last else { continue }
+            // Number the markers only when there's more than one leg —
+            // a single activity keeps the plain "Start" / "End".
+            let suffix = group.isMulti ? " \(index + 1)" : ""
+            startLats.append(first.lat); startLons.append(first.lon)
+            startLabels.append("Start" + suffix)
+            endLats.append(last.lat); endLons.append(last.lon)
+            endLabels.append("End" + suffix)
+        }
         let startTrace: [String: Any] = [
             "type": "scattermap",
-            "lat": [startSample.lat],
-            "lon": [startSample.lon],
+            "lat": startLats,
+            "lon": startLons,
             "mode": "markers",
             "marker": [
                 "size": 16,
@@ -1706,14 +1836,14 @@ public enum PlotlyEncoder {
                 "opacity": 1.0,
             ] as [String: Any],
             "hoverinfo": "none",
-            "hovertext": ["Start"],
+            "hovertext": startLabels,
             "showlegend": false,
             "visible": true,
         ]
         let endTrace: [String: Any] = [
             "type": "scattermap",
-            "lat": [endSample.lat],
-            "lon": [endSample.lon],
+            "lat": endLats,
+            "lon": endLons,
             "mode": "markers",
             "marker": [
                 "size": 16,
@@ -1721,12 +1851,12 @@ public enum PlotlyEncoder {
                 "opacity": 1.0,
             ] as [String: Any],
             "hoverinfo": "none",
-            "hovertext": ["End"],
+            "hovertext": endLabels,
             "showlegend": false,
             "visible": true,
         ]
 
-        // 8. Final trace order — earlier traces draw underneath later ones:
+        // 9. Final trace order — earlier traces draw underneath later ones:
         //    [outline, plain, ...rainbow, pauses, start, end]
         var allTraces: [[String: Any]] = [outlineTrace, plainTrace]
         allTraces.append(contentsOf: rainbowTraces)
@@ -1738,7 +1868,7 @@ public enum PlotlyEncoder {
         // trailing traces (pause, start, end) are visible in every mode.
         let extrasStart = 2 + rainbowTraces.count
 
-        // 9. Visibility array helper. Outline (idx 0), plain (idx 1), and the
+        // 9b. Visibility array helper. Outline (idx 0), plain (idx 1), and the
         //    three trailing extras (pause / start / end) are always visible;
         //    only the active metric's rainbow traces toggle.
         func visibility(forMetric active: GPSMetric?) -> [Bool] {
@@ -1846,15 +1976,19 @@ public enum PlotlyEncoder {
         // JS preview needs lat/lon for samples *outside* the current
         // filter — otherwise the polyline would just stop at the old trim
         // boundary even as the handle moves past it.
+        //
+        // Only the first member is stashed, and in that member's own elapsed
+        // coordinates: the trim widget is single-activity only (it renders an
+        // explanatory empty state for a group), so those are the only samples
+        // a drag preview can ever ask for.
+        let trimSource = group.allRecords(ofMember: 0)
         var trimSamples: [[String: Any]] = []
-        trimSamples.reserveCapacity(allRows.count)
-        for row in allRows {
-            guard
-                let lat = row.double("lat_deg"),
-                let lon = row.double("lon_deg"),
-                let e = row.int("elapsed_s")
-            else { continue }
-            trimSamples.append(["lat": lat, "lon": lon, "elapsedS": e])
+        trimSamples.reserveCapacity(trimSource.count)
+        for rec in trimSource {
+            guard let lat = rec.latDeg, let lon = rec.lonDeg else { continue }
+            trimSamples.append([
+                "lat": lat, "lon": lon, "elapsedS": rec.memberElapsedS,
+            ])
         }
         let trimTargets: [String: Any] = [
             "outline_idx": 0,

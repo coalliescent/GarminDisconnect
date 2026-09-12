@@ -12,7 +12,9 @@ viewer cares about:
       middle (so DateUtil.fillGaps() has something to detect)
     - 30 wellness_samples rows of mixed metrics
     - 3 activities (run, walk, swim) with realistic field values
-    - 30 activity_records on the run (a small GPS trace)
+    - 30 activity_records on the run and 30 on the walk (small GPS traces;
+      the walk starts 24h later and continues the run's route, so the
+      multi-activity grouping code has a realistic two-member case)
     - 1 sleep_session with 4 sleep_stages
     - 3 runs rows so the Sync tab has something to display
 """
@@ -151,6 +153,32 @@ def main():
             None,            # power
             18.5,            # temp
         ))
+    # ---- activity_records (the walk, 30 1Hz samples) ----
+    #
+    # The walk starts exactly 24h after the run and its GPS trail picks up
+    # where the run's left off, so run+walk is a realistic stand-in for the
+    # thing multi-selection exists for: one outing split across two files,
+    # a day apart. ActivityGroupTests leans on both of those facts (the
+    # 86400s offset and the chained route), so don't retime it casually.
+    walk_id = activity_ids[1]
+    start_walk = NOW - timedelta(days=1, hours=8)
+    walk_lat = base_lat + 29 * 0.00005
+    walk_lon = base_lon + 29 * 0.00005
+    for i in range(30):
+        ts = start_walk + timedelta(seconds=i)
+        record_rows.append((
+            walk_id, iso(ts), float(i),
+            walk_lat + i * 0.00003,
+            walk_lon + i * 0.00003,
+            13.0 + i * 0.05,  # altitude
+            float(i * 2),     # distance — 2 m/s, restarts at zero
+            1.9,              # speed
+            110 + (i % 5),    # hr — comfortably a zone below the run
+            60,               # cadence
+            None,             # power
+            17.0,             # temp
+        ))
+
     cur.executemany(
         """INSERT INTO activity_records (
             activity_id, timestamp_utc, elapsed_s, lat_deg, lon_deg, altitude_m,

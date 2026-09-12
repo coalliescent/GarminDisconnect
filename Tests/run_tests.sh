@@ -3,8 +3,9 @@
 #
 # This is a separate swiftc invocation from build.sh because the test binary doesn't
 # include the AppKit-using sources (main.swift, AppDelegate, MainWindowController) —
-# those would just be dead code in a CLI test binary. We compile only Database.swift
-# + DatabaseTests.swift and run the resulting executable.
+# those would just be dead code in a CLI test binary. Everything under Sources/Data
+# and Sources/Util is Foundation-only, so the chart encoders compile in here too and
+# their payloads are tested directly against the fixture archive.
 
 set -euo pipefail
 
@@ -37,8 +38,14 @@ swiftc \
     -o "$TEST_BIN" \
     Sources/Data/Database.swift \
     Sources/Data/DateUtil.swift \
+    Sources/Data/ActivityTrim.swift \
+    Sources/Data/ActivityGroup.swift \
+    Sources/Data/Queries.swift \
+    Sources/Data/PlotlyEncoder.swift \
+    Sources/Util/ChartWindow.swift \
     Tests/DatabaseTests.swift \
     Tests/DateUtilTests.swift \
+    Tests/ActivityGroupTests.swift \
     Tests/TestsMain.swift
 
 echo "running tests..."
