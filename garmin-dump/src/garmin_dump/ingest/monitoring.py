@@ -6,15 +6,59 @@ message types and the field set varies between firmwares — we treat the file a
 stream of arbitrary `(timestamp, metric, value, unit)` samples (`wellness_samples`),
 plus a single calendar-day rollup row (`wellness_daily`).
 
-Rollup formulas (documented here because the future viewer will rely on them being
-stable):
+How the `monitoring` (g=55) message actually works
+--------------------------------------------------
 
-    steps              = SUM of monitoring.cycles where activity_type == 'walking'/'running'
-    distance_m         = SUM of monitoring.distance
-    active_kcal        = SUM of monitoring.active_calories
-    bmr_kcal           = SUM of monitoring.calories - active_kcal (best effort)
-    floors_climbed     = SUM of monitoring.floors_climbed
-    intensity_min      = SUM of monitoring.moderate_activity_minutes + 2 * vigorous
+Everything below is checked against the FIT global profile that `fitdecode`
+ships (`fitdecode.profile.MESSAGE_TYPES[55]`), not inferred from the data:
+
+    f1  calories                  kcal          "Accumulated total calories.
+                                                 Maintained ... for each activity_type"
+    f2  distance                  m, scale 100  "Accumulated distance. ... for each
+                                                 activity_type"
+    f3  cycles                    scale 2       "Accumulated cycles. ... for each
+                                                 activity_type"
+          +-- subfield `steps`    scale 1       when activity_type in (walking, running)
+          +-- subfield `strokes`  scale 2       when activity_type in (cycling, swimming)
+    f5  activity_type
+    f19 active_calories           kcal
+    f24 current_activity_type_intensity -> expands to components (activity_type, intensity)
+    f29 duration_min              min
+    f31 ascent / f32 descent      m, scale 1000
+    f33 moderate_activity_minutes / f34 vigorous_activity_minutes   minutes
+
+Three consequences drive this module, each pinned by a test in
+`tests/unit/test_monitoring_rollup.py` that decodes a real FIT blob:
+
+1.  The counters ACCUMULATE PER activity_type, and the watch re-emits the
+    running total on every flush — one wearer's `walking.active_calories`
+    climbed 672 -> 704 -> 715 -> 777 inside a single file. So a day is the sum
+    across activity types of the HIGH-WATER MARK within each, never a sum of
+    the messages. Summing them invented steps: the 2026-09-11 file re-emitted
+    the same day three times and reported 28,676 steps for a 14,338-step day.
+
+2.  `steps` is a SUBFIELD of `cycles`, so f3 means different things per
+    activity_type and only walking/running rows carry steps. Because
+    `FieldData.is_named()` also matches the parent field, `get_value("cycles")`
+    on a walking row returns the *steps* value (scale 1), while on a generic or
+    cycling row it returns strides/strokes (scale 2) — the same raw f3 halved.
+    Reading `cycles` as a step count therefore double-counts on one row shape
+    and halves on another. We read the `steps` subfield and take `cycles * 2`
+    only where activity_type says f3 is steps.
+
+3.  There is NO `floors_climbed` field anywhere in the FIT profile. The old
+    lookup could never fire, so that column has always been NULL; f31 `ascent`
+    is the only plausible source and deriving floors from it is left to a
+    follow-up rather than guessed at here.
+
+Rollup formulas (the future viewer relies on these being stable):
+
+    steps              = SUM over walking/running of MAX(steps, or cycles * 2)
+    distance_m         = SUM over activity_type of MAX(distance)
+    active_kcal        = SUM over activity_type of MAX(active_calories)
+    bmr_kcal           = SUM over activity_type of MAX(calories) - active_kcal
+    intensity_min      = MAX(moderate_activity_minutes) + 2 * MAX(vigorous)
+    floors_climbed     = always NULL, see (3)
     resting_hr         = MIN of monitoring.heart_rate where activity_type == 'sedentary'
     min_hr / max_hr    = MIN/MAX of monitoring.heart_rate
     avg_stress         = AVG of monitoring.stress_level
@@ -22,8 +66,20 @@ stable):
     spo2_avg           = AVG of monitoring.spo2
     respiration_avg    = AVG of monitoring.respiration_rate
 
+Intensity minutes take a max for the same reason as the rest: every windowed
+message reports a total over [local midnight, its timestamp], so three
+re-emissions of one day must not be added up. The one thing we cannot settle
+from the profile is whether the device's counter resets daily or on Garmin's
+weekly Intensity Minutes goal; if it is weekly, a day reads week-to-date. That
+is a bounded, documented over-report rather than the unbounded triple-count the
+old SUM produced.
+
 Anything we can't compute stays NULL. Raw monitoring messages also land in
 `wellness_samples` so an unrecognized field can be back-filled later.
+
+`raw_json` is per-file, not per-day: it holds the messages of whichever file last
+wrote the row, so it need not contain the messages the cumulative columns were
+derived from.
 """
 
 from __future__ import annotations
@@ -37,12 +93,14 @@ from typing import Any
 
 from garmin_dump.db.repo import json_dumps_safe, utc_now_iso
 from garmin_dump.ingest.fit_reader import (
+    field_def_num,
     field_units,
     iter_messages_for,
     iter_messages_for_num,
     message_to_dict,
     msg_num,
     raw_field_values,
+    resolved_field_name,
     safe_get,
 )
 
@@ -66,6 +124,15 @@ _NAMED_NUM_MSGS = (
 
 # Numeric fields that we extract as `wellness_samples` rows. Each becomes one
 # (metric, value, unit) sample with the message's timestamp.
+#
+# `cycles` covers `steps`/`strokes` too: they are subfields of the same f3, and
+# the extraction loop records whichever name fitdecode resolved. Listing both
+# `cycles` and `steps` (as this did originally) wrote the identical value twice,
+# so anything summing sample metrics counted a walking row's steps double.
+#
+# `floors_climbed` used to be listed here and is not a FIT field at all — see
+# the module docstring. `ascent`/`descent` (f31/f32) are the real elevation
+# signals and are captured so the floors follow-up has data to work from.
 _SAMPLE_FIELDS = (
     "heart_rate",
     "stress_level",
@@ -76,8 +143,8 @@ _SAMPLE_FIELDS = (
     "calories",
     "distance",
     "cycles",
-    "steps",
-    "floors_climbed",
+    "ascent",
+    "descent",
     "moderate_activity_minutes",
     "vigorous_activity_minutes",
 )
@@ -119,24 +186,34 @@ def ingest_monitoring(
         if msg_ts is None:
             continue
         rollup.add(msg, msg_ts)
+        emitted: set[int] = set()
         for field_name in _SAMPLE_FIELDS:
             v = safe_get(msg, field_name)
             if v is None:
                 continue
+            # One physical field can answer to several profile names (f3 is
+            # `cycles`/`steps`/`strokes`), so key on the definition number and
+            # record the value once, under the name fitdecode resolved.
+            def_num = field_def_num(msg, field_name)
+            if def_num is not None:
+                if def_num in emitted:
+                    continue
+                emitted.add(def_num)
+            metric = resolved_field_name(msg, field_name) or field_name
             try:
                 value = float(v)
             except (TypeError, ValueError):
                 continue
-            if field_name not in seen_units:
-                seen_units[field_name] = field_units(msg, field_name)
+            if metric not in seen_units:
+                seen_units[metric] = field_units(msg, field_name)
             pending.append(
                 (
                     device_id,
                     sync_id,
                     msg_ts.isoformat(),
-                    field_name,
+                    metric,
                     value,
-                    seen_units[field_name],
+                    seen_units[metric],
                 )
             )
             sample_count += 1
@@ -339,6 +416,56 @@ def _resp_to_brpm(v: Any) -> float | None:
 # ---- daily rollup ----------------------------------------------------------------------
 
 
+# Fields that accumulate per activity_type on `monitoring`: (fit field, rollup
+# key, coercer). See the module docstring for why these take a max and never a
+# sum. `steps` is handled separately because f3 is activity_type-dependent.
+_CUMULATIVE_FIELDS: tuple[tuple[str, str, type[int] | type[float]], ...] = (
+    ("distance", "distance_m", float),
+    ("active_calories", "active_kcal", int),
+    ("calories", "calories_total", int),
+    ("moderate_activity_minutes", "moderate_min", int),
+    ("vigorous_activity_minutes", "vigorous_min", int),
+)
+_CUMULATIVE_KEYS = ("steps", *(key for _, key, _ in _CUMULATIVE_FIELDS))
+
+# f3 (`cycles`) only means *steps* when activity_type says so; for cycling and
+# swimming the same field is strokes, and for generic/sedentary it is an
+# undifferentiated cycle count. Anything outside this set is not a step source.
+_STEP_ACTIVITY_TYPES = frozenset({"walking", "running"})
+
+# `all` (enum 254) is an explicit cross-type aggregate, so adding it to the
+# per-type totals would double the day. We have never seen the Instinct 3 emit
+# it; excluding it costs nothing and removes the failure mode.
+_AGGREGATE_ACTIVITY_TYPES = frozenset({"all"})
+
+
+def _msg_steps(msg: Any, activity_type: str) -> int | None:
+    """Step count carried by one `monitoring` message, or None.
+
+    f3 is `cycles` with scale 2, and `steps` is its scale-1 subfield for
+    walking/running. Two message shapes reach us:
+
+      * `activity_type` present as f5 — fitdecode resolves the subfield, so
+        `get_value("steps")` is the step count directly. (`get_value("cycles")`
+        returns the *same* number here, because `is_named` matches the parent
+        field; that equality is what made reading `cycles` look correct.)
+      * `activity_type` arriving as an expanded component of f24, as the
+        intraday messages do — fitdecode cannot resolve a subfield from an
+        expanded field, so only `cycles` exists and it is the scale-2 value,
+        i.e. half the steps.
+
+    So: take `steps` when present, otherwise `cycles * 2`, and only where
+    activity_type says f3 counts steps at all.
+    """
+    if activity_type not in _STEP_ACTIVITY_TYPES:
+        return None
+    if (steps := _coerce_number(safe_get(msg, "steps"), int)) is not None:
+        return int(steps)
+    if (cycles := _coerce_number(safe_get(msg, "cycles"), float)) is not None:
+        return round(cycles * 2)
+    return None
+
+
 class _RollupAccumulator:
     """Accumulates per-day wellness metrics during a single-pass scan of monitoring."""
 
@@ -349,13 +476,8 @@ class _RollupAccumulator:
 
     def _new_day(self) -> dict[str, Any]:
         return {
-            "steps": 0,
-            "distance_m": 0.0,
-            "active_kcal": 0,
-            "calories_total": 0,
-            "floors_climbed": 0,
-            "moderate_min": 0,
-            "vigorous_min": 0,
+            # key -> {activity_type: high-water mark}, see _CUMULATIVE_FIELDS.
+            "cumulative": {key: {} for key in _CUMULATIVE_KEYS},
             "hr_values": [],
             "resting_hr_candidates": [],
             "stress_values": [],
@@ -364,6 +486,21 @@ class _RollupAccumulator:
             "respiration_values": [],
             "hrv_values": [],
         }
+
+    @staticmethod
+    def _mark(
+        d: dict[str, Any], key: str, activity_type: str, value: float | int | None
+    ) -> None:
+        """Record `value` as this activity_type's high-water mark for `key`.
+
+        Never decreases: the counters accumulate, so a smaller value is an
+        earlier snapshot of the same day and carries no new information.
+        """
+        if value is None:
+            return
+        by_type = d["cumulative"][key]
+        if value > by_type.get(activity_type, 0):
+            by_type[activity_type] = value
 
     def add_value(self, ts: datetime, key: str, value: float | int) -> None:
         """Append a single sample to the named per-day list. Used by the
@@ -376,31 +513,56 @@ class _RollupAccumulator:
         if isinstance(bucket, list):
             bucket.append(value)
 
+    def _local_date(self, msg: Any, ts: datetime) -> str:
+        """Local calendar day a monitoring message's data belongs to.
+
+        A message carrying `duration_min` describes the window that ENDS at its
+        timestamp rather than the instant it lands. Every one of the 276
+        windowed messages across the 299 archived monitor files starts its
+        window at local midnight, so the window is [midnight, midnight +
+        duration_min] and the end-of-day snapshot is stamped exactly when the
+        next local midnight strikes, with `duration_min: 1440`, reporting the
+        day that just finished. Bucketing that by its own timestamp shifts every
+        daily total forward by a day.
+
+        Attributing by the window's MIDPOINT is exact for this shape: with the
+        window anchored at midnight, the midpoint is `midnight + duration/2`,
+        which lands inside the correct day for every duration up to 1440. Using
+        the window's start would be exact too in principle, but 15 of those
+        messages start within two minutes of midnight, where a little watch
+        drift puts the start on the wrong side of it; the midpoint has half a
+        day of margin either way.
+
+        Everything else — including the timestampless intraday messages, which
+        carry activity_type packed into f24 and which the viewer doesn't use
+        yet — keeps its own day.
+        """
+        duration_min = _safe_int(safe_get(msg, "duration_min"))
+        if duration_min is not None and duration_min > 0:
+            ts = ts - timedelta(minutes=duration_min / 2)
+        return (ts + self.offset).date().isoformat()
+
     def add(self, msg: Any, ts: datetime) -> None:
-        local_date = (ts + self.offset).date().isoformat()
+        local_date = self._local_date(msg, ts)
         d = self._by_date[local_date]
         self._raw_msgs[local_date].append(message_to_dict(msg))
 
-        if (s := _safe_int(safe_get(msg, "cycles") or safe_get(msg, "steps"))) is not None:
-            activity_type = safe_get(msg, "activity_type") or ""
-            if str(activity_type).lower() in ("walking", "running"):
-                d["steps"] += s
-        if (dist := _safe_float(safe_get(msg, "distance"))) is not None:
-            d["distance_m"] += dist
-        if (cal := _safe_int(safe_get(msg, "active_calories"))) is not None:
-            d["active_kcal"] += cal
-        if (cal := _safe_int(safe_get(msg, "calories"))) is not None:
-            d["calories_total"] += cal
-        if (floors := _safe_int(safe_get(msg, "floors_climbed"))) is not None:
-            d["floors_climbed"] += floors
-        if (m := _safe_int(safe_get(msg, "moderate_activity_minutes"))) is not None:
-            d["moderate_min"] += m
-        if (v := _safe_int(safe_get(msg, "vigorous_activity_minutes"))) is not None:
-            d["vigorous_min"] += v
+        # A message with no activity_type at all still has its own accumulator;
+        # `generic` is the profile's name for enum 0, so it is the natural key.
+        raw_activity_type = safe_get(msg, "activity_type")
+        activity_type = str(raw_activity_type or "generic").lower()
+        if activity_type not in _AGGREGATE_ACTIVITY_TYPES:
+            self._mark(d, "steps", activity_type, _msg_steps(msg, activity_type))
+            for field, key, coercer in _CUMULATIVE_FIELDS:
+                self._mark(
+                    d, key, activity_type, _coerce_number(safe_get(msg, field), coercer)
+                )
         if (hr := _safe_int(safe_get(msg, "heart_rate"))) is not None:
             d["hr_values"].append(hr)
-            activity_type = str(safe_get(msg, "activity_type") or "").lower()
-            if activity_type in ("sedentary", "still", ""):
+            # Unchanged from before the cumulative rework: an explicitly
+            # `generic` row is not a resting-HR candidate, but a row with no
+            # activity_type field is.
+            if activity_type in ("sedentary", "still") or raw_activity_type is None:
                 d["resting_hr_candidates"].append(hr)
         if (s := _safe_int(safe_get(msg, "stress_level"))) is not None:
             d["stress_values"].append(s)
@@ -414,8 +576,15 @@ class _RollupAccumulator:
     def write(self, conn: sqlite3.Connection, *, sync_id: int, device_id: int) -> None:
         now = utc_now_iso()
         for date_local, d in self._by_date.items():
-            bmr_kcal = max(0, d["calories_total"] - d["active_kcal"]) or None
-            intensity_min = (d["moderate_min"] or 0) + 2 * (d["vigorous_min"] or 0)
+            # One day = sum across activity types of each type's high-water mark.
+            totals = {key: sum(by_type.values()) for key, by_type in d["cumulative"].items()}
+            bmr_kcal = max(0, totals["calories_total"] - totals["active_kcal"]) or None
+            intensity_min = totals["moderate_min"] + 2 * totals["vigorous_min"]
+            # `floors_climbed` has no FIT field to read (see the module
+            # docstring); it stays NULL until f31 `ascent` is promoted, and the
+            # column keeps its merge clause below so that lands without a
+            # schema change.
+            floors_climbed = None
             # Resting HR: prefer the standard `monitoring`-message
             # `activity_type='sedentary'` candidates, but on Instinct 3 those
             # rarely materialize because almost all HR data lives in
@@ -436,12 +605,41 @@ class _RollupAccumulator:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(device_id, date_local) DO UPDATE SET
                     sync_id          = excluded.sync_id,
-                    steps            = excluded.steps,
-                    distance_m       = excluded.distance_m,
-                    active_kcal      = excluded.active_kcal,
-                    bmr_kcal         = excluded.bmr_kcal,
-                    floors_climbed   = excluded.floors_climbed,
-                    intensity_min    = excluded.intensity_min,
+                    -- Accumulating family: a monitoring file is a rolling window
+                    -- that overlaps its neighbours, so one local day is written
+                    -- by several files in whatever order the pull happens to
+                    -- process them. Take the high-water mark so a later, more
+                    -- partial file can never move a finished day backwards --
+                    -- and keep NULL as NULL, which the viewer depends on.
+                    --
+                    -- The merge is monotonic by design, which means it cannot
+                    -- lower a value an older, buggier parser wrote: replaying
+                    -- the correct number over a corrupt one leaves the corrupt
+                    -- one. Repairing history therefore has to clear these
+                    -- columns and rebuild, which is what
+                    -- `db.migrations.clear_accumulated_wellness` is for --
+                    -- called once by migration v3 and again by
+                    -- `garmin-dump ingest --reparse`.
+                    steps            = CASE WHEN excluded.steps IS NULL
+                                            THEN wellness_daily.steps
+                                            ELSE MAX(COALESCE(wellness_daily.steps, 0), excluded.steps) END,
+                    distance_m       = CASE WHEN excluded.distance_m IS NULL
+                                            THEN wellness_daily.distance_m
+                                            ELSE MAX(COALESCE(wellness_daily.distance_m, 0.0), excluded.distance_m) END,
+                    active_kcal      = CASE WHEN excluded.active_kcal IS NULL
+                                            THEN wellness_daily.active_kcal
+                                            ELSE MAX(COALESCE(wellness_daily.active_kcal, 0), excluded.active_kcal) END,
+                    bmr_kcal         = CASE WHEN excluded.bmr_kcal IS NULL
+                                            THEN wellness_daily.bmr_kcal
+                                            ELSE MAX(COALESCE(wellness_daily.bmr_kcal, 0), excluded.bmr_kcal) END,
+                    floors_climbed   = CASE WHEN excluded.floors_climbed IS NULL
+                                            THEN wellness_daily.floors_climbed
+                                            ELSE MAX(COALESCE(wellness_daily.floors_climbed, 0), excluded.floors_climbed) END,
+                    -- Intensity minutes accumulate like the rest, so they merge
+                    -- the same way rather than letting the last file win.
+                    intensity_min    = CASE WHEN excluded.intensity_min IS NULL
+                                            THEN wellness_daily.intensity_min
+                                            ELSE MAX(COALESCE(wellness_daily.intensity_min, 0), excluded.intensity_min) END,
                     resting_hr       = excluded.resting_hr,
                     min_hr           = excluded.min_hr,
                     max_hr           = excluded.max_hr,
@@ -457,11 +655,11 @@ class _RollupAccumulator:
                     device_id,
                     sync_id,
                     date_local,
-                    d["steps"] or None,
-                    d["distance_m"] or None,
-                    d["active_kcal"] or None,
+                    totals["steps"] or None,
+                    totals["distance_m"] or None,
+                    totals["active_kcal"] or None,
                     bmr_kcal,
-                    d["floors_climbed"] or None,
+                    floors_climbed,
                     intensity_min or None,
                     resting_hr,
                     _safe_min(d["hr_values"]),
@@ -477,22 +675,29 @@ class _RollupAccumulator:
             )
 
 
-def _safe_int(v: Any) -> int | None:
-    if v is None:
+def _coerce_number(v: Any, coercer: type[int] | type[float]) -> int | float | None:
+    """Coerce a raw FIT field value to `coercer`, or None if it isn't a number.
+
+    `bool` is rejected rather than silently becoming 0/1: FIT enums decode to
+    named strings, so a bool here means something upstream went wrong and a
+    0 would quietly take part in a max.
+    """
+    if v is None or isinstance(v, bool):
         return None
     try:
-        return int(v)
+        return coercer(v)
     except (TypeError, ValueError):
         return None
+
+
+def _safe_int(v: Any) -> int | None:
+    value = _coerce_number(v, int)
+    return int(value) if value is not None else None
 
 
 def _safe_float(v: Any) -> float | None:
-    if v is None:
-        return None
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
+    value = _coerce_number(v, float)
+    return float(value) if value is not None else None
 
 
 def _safe_min(xs: Iterable[int]) -> int | None:

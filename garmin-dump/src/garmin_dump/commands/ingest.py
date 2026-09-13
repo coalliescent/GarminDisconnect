@@ -9,6 +9,7 @@ before re-insertion.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date, timedelta
 from pathlib import Path
 
 from rich.console import Console
@@ -24,6 +25,7 @@ from garmin_dump.archive.layout import Category
 from garmin_dump.config import Config
 from garmin_dump.db import repo
 from garmin_dump.db.connection import Database
+from garmin_dump.db.migrations import clear_accumulated_wellness
 from garmin_dump.ingest.dispatcher import ingest_file
 from garmin_dump.logging_setup import get_logger
 
@@ -58,6 +60,12 @@ def run_ingest(
         if opts.reparse:
             for row in rows:
                 _purge_existing(db, row)
+            cleared = _clear_wellness_rollup(db, rows, opts, console)
+            if cleared:
+                console.print(
+                    f"[dim]cleared the accumulated wellness_daily columns on {cleared} "
+                    "row(s); they rebuild from the monitor files below.[/dim]"
+                )
 
         seen = 0
         ok = 0
@@ -141,8 +149,58 @@ def _purge_existing(db: Database, row) -> None:
         "DELETE FROM sleep_sessions WHERE device_id = ? AND sync_id = ?",
         (device_id, sync_id),
     )
-    # wellness_daily uses upsert keyed by (device_id, date_local) — its rows
-    # accumulate across files for the same day, so we don't pre-delete here.
+    # wellness_daily is NOT purged per-file: its rows are keyed by
+    # (device_id, date_local) and one day is written by several overlapping
+    # monitor files, so deleting by sync_id would drop days the current file
+    # only partly covers. It is handled once per run by
+    # `_clear_wellness_rollup` instead.
+
+
+def _clear_wellness_rollup(
+    db: Database, rows, opts: IngestOptions, console: Console
+) -> int:
+    """Clear the accumulated `wellness_daily` columns ahead of a `--reparse`.
+
+    The rollup merges those columns by high-water mark so that a later, more
+    partial monitor file can never drag a finished day backwards. The same
+    monotonicity means re-ingesting cannot *lower* a value an older parser got
+    wrong, so a reparse has to clear before it rebuilds. Everything else on the
+    row (HR, stress, SpO2, body battery) is bucketed by its own timestamp and is
+    simply overwritten, so it is left alone.
+
+    Only the devices whose monitor files are actually in this run are touched.
+    `--since` filters on when a file was *seen*, not on the days it describes,
+    so the date floor backs off one day to cover the end-of-day snapshot that
+    reports the previous day.
+    """
+    monitor_devices = tuple(
+        sorted({int(r["device_id"]) for r in rows if r["category"] == str(Category.MONITOR)})
+    )
+    if not monitor_devices:
+        return 0
+
+    since_date_local = None
+    if opts.since:
+        try:
+            since_date_local = (
+                date.fromisoformat(opts.since) - timedelta(days=1)
+            ).isoformat()
+        except ValueError:
+            console.print(
+                f"[yellow]could not read --since {opts.since!r} as a date; clearing "
+                "the wellness rollup for all dates on the affected devices.[/yellow]"
+            )
+    if since_date_local:
+        console.print(
+            f"[yellow]partial reparse: only monitor files first seen on or after "
+            f"{opts.since} are being replayed, so wellness_daily is rebuilt from "
+            f"{since_date_local} onward. Days in that range whose other files are "
+            "outside the selection stay NULL rather than wrong — run without "
+            "--since to rebuild the whole history.[/yellow]"
+        )
+    return clear_accumulated_wellness(
+        db.conn, device_ids=monitor_devices, since_date_local=since_date_local
+    )
 
 
 def _make_progress(console: Console) -> Progress:

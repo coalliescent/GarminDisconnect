@@ -16,7 +16,7 @@ from pathlib import Path
 from garmin_dump.errors import SchemaVersionError
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-CURRENT_VERSION = 2
+CURRENT_VERSION = 3
 
 MigrationFn = Callable[[sqlite3.Connection], None]
 
@@ -46,6 +46,102 @@ def _migration_v2(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(conn, "wellness_samples", "local_offset_s", "INTEGER")
 
 
+# Columns of `wellness_daily` that the monitoring rollup merges by high-water
+# mark. Shared with `commands/ingest.py`, which clears the same set on a
+# `--reparse` so a future rollup change can also be rebuilt from disk.
+ACCUMULATED_WELLNESS_COLUMNS = (
+    "steps",
+    "distance_m",
+    "active_kcal",
+    "bmr_kcal",
+    "floors_climbed",
+    "intensity_min",
+)
+
+# Every column that carries a measurement, as opposed to bookkeeping. A row
+# with all of these NULL holds nothing the viewer can draw.
+_WELLNESS_METRIC_COLUMNS = (
+    *ACCUMULATED_WELLNESS_COLUMNS,
+    "resting_hr",
+    "min_hr",
+    "max_hr",
+    "avg_stress",
+    "body_battery_min",
+    "body_battery_max",
+    "spo2_avg",
+    "respiration_avg",
+)
+
+
+def clear_accumulated_wellness(
+    conn: sqlite3.Connection,
+    *,
+    device_ids: tuple[int, ...] | None = None,
+    since_date_local: str | None = None,
+) -> int:
+    """NULL the high-water-mark columns of `wellness_daily`, returning rows hit.
+
+    The rollup's cross-file merge is deliberately monotonic — a later, more
+    partial file must never drag a finished day downwards — which also means it
+    can never lower a value a previous parser got wrong. Re-ingesting correct
+    data over a corrupt row leaves the corrupt row. So a repair has to clear
+    first and rebuild second, and this is the clearing half.
+
+    Scope to `device_ids` / `since_date_local` to bound the damage when only
+    part of the archive is being replayed; clearing a day whose files are not
+    in the replay set leaves it NULL, which reads as "unknown" rather than
+    wrong.
+    """
+    sets = ", ".join(f"{c} = NULL" for c in ACCUMULATED_WELLNESS_COLUMNS)
+    sql = f"UPDATE wellness_daily SET {sets}"
+    where: list[str] = []
+    params: list[object] = []
+    if device_ids:
+        where.append(f"device_id IN ({','.join('?' for _ in device_ids)})")
+        params.extend(device_ids)
+    if since_date_local:
+        where.append("date_local >= ?")
+        params.append(since_date_local)
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    cur = conn.execute(sql, params)
+    return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+
+
+def delete_empty_wellness_rows(conn: sqlite3.Connection) -> int:
+    """Drop `wellness_daily` rows left with no measurement at all."""
+    nulls = " AND ".join(f"{c} IS NULL" for c in _WELLNESS_METRIC_COLUMNS)
+    cur = conn.execute(f"DELETE FROM wellness_daily WHERE {nulls}")
+    return cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
+
+
+def _migration_v3(conn: sqlite3.Connection) -> None:
+    """Clear the monitoring rollup's accumulated columns so they get rebuilt.
+
+    Two defects in the old `monitoring` rollup wrote every one of these values:
+
+      * accumulated per-activity_type snapshots were summed as if they were
+        increments, inflating a day (one 14,338-step day read 28,676); and
+      * a day written by several overlapping files took whichever file landed
+        last, so a finished day could be overwritten by a partial one
+        (a 25,966-step day read 242).
+
+    Both are fixed in `ingest/monitoring.py`, but the new merge is monotonic and
+    therefore cannot pull an inflated legacy value back down. NULLing the
+    columns here lets the very next `garmin-dump ingest` repopulate them from
+    the FIT files already on disk — no watch required. Rows that held nothing
+    but those columns are dropped so the viewer sees no empty days.
+
+    The per-day HR / stress / SpO2 / body-battery aggregates are untouched: they
+    are bucketed by their own timestamps, which neither defect affected.
+
+    This is a one-shot repair, not a schema change. It is safe to have run on a
+    database whose rows were already correct — it only costs one re-ingest.
+    """
+    clear_accumulated_wellness(conn)
+    delete_empty_wellness_rows(conn)
+
+
 def _add_column_if_missing(
     conn: sqlite3.Connection, table: str, column: str, decl: str
 ) -> None:
@@ -63,6 +159,7 @@ def _add_column_if_missing(
 MIGRATIONS: list[tuple[int, MigrationFn]] = [
     (1, _migration_v1),
     (2, _migration_v2),
+    (3, _migration_v3),
 ]
 
 

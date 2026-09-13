@@ -30,10 +30,32 @@ private let SQLITE_TRANSIENT = unsafeBitCast(
     to: sqlite3_destructor_type.self
 )
 
-/// Schema version this binary was written against. Bump in lockstep with garmin-dump.
+/// Newest garmin-dump schema this binary understands. Bump in lockstep with
+/// garmin-dump's `db/migrations.py`.
 /// v2: added `local_offset_s` to sleep_sessions and wellness_samples so the
 ///     viewer can render times in the wearer's local zone instead of UTC.
-public let GARMIN_DUMP_SCHEMA_VERSION: Int32 = 2
+/// v3: garmin-dump's one-shot repair of the monitoring rollup — it NULLs the
+///     accumulated `wellness_daily` columns (steps, distance_m, active_kcal,
+///     bmr_kcal, floors_climbed, intensity_min) so a subsequent
+///     `garmin-dump ingest --reparse` rebuilds them from the archived FIT
+///     files. No table or column changed, so a v3 database reads exactly like
+///     a v2 one.
+public let GARMIN_DUMP_SCHEMA_VERSION: Int32 = 3
+
+/// Oldest garmin-dump schema this binary can read. Every version from here to
+/// `GARMIN_DUMP_SCHEMA_VERSION` is column-compatible with the queries in
+/// Queries.swift, so the viewer accepts the whole range rather than demanding
+/// an exact match — otherwise running either tool would strand the other.
+public let GARMIN_DUMP_MIN_SCHEMA_VERSION: Int32 = 2
+
+/// Highest version the viewer can bring a database *to* by itself.
+///
+/// Deliberately lower than `GARMIN_DUMP_SCHEMA_VERSION`: the viewer knows how
+/// to add v2's columns, but v3 is a data repair that only garmin-dump can
+/// complete (it has to re-read the FIT archive to refill what v3 clears).
+/// Stamping a v2 database as v3 here would make garmin-dump's own migration
+/// ladder skip the repair, so the wrong step counts would never be fixed.
+private let VIEWER_MIGRATES_TO: Int32 = 2
 
 // MARK: - Errors
 
@@ -42,7 +64,7 @@ public enum DatabaseError: Error, CustomStringConvertible {
     case prepare(sql: String, message: String)
     case bind(index: Int, message: String)
     case step(message: String)
-    case schemaMismatch(found: Int32, expected: Int32)
+    case schemaMismatch(found: Int32, oldest: Int32, newest: Int32)
     case fileMissing(path: String)
 
     public var description: String {
@@ -55,10 +77,14 @@ public enum DatabaseError: Error, CustomStringConvertible {
             return "bind \(index) failed: \(message)"
         case .step(let message):
             return "step failed: \(message)"
-        case .schemaMismatch(let found, let expected):
+        case .schemaMismatch(let found, let oldest, let newest):
+            let wanted = oldest == newest ? "\(newest)" : "\(oldest)-\(newest)"
+            let fix = found > newest
+                ? "Upgrade GarminDisconnect."
+                : "Run `garmin-dump ingest --reparse` to bring the database up to date."
             return """
                 garmin-dump schema mismatch: database is at version \(found), \
-                GarminDisconnect expects \(expected). Upgrade one of the tools to match.
+                GarminDisconnect supports \(wanted). \(fix)
                 """
         case .fileMissing(let path):
             return "no garmin-dump archive at \(path). Run `garmin-dump pull` first."
@@ -237,7 +263,7 @@ public final class Database {
         try createViewerTablesIfMissing(db)
 
         let current = readUserVersion(db)
-        guard current < GARMIN_DUMP_SCHEMA_VERSION else { return }
+        guard current < VIEWER_MIGRATES_TO else { return }
 
         // v1 → v2: add `local_offset_s` columns. Both ALTERs are guarded by
         // a `PRAGMA table_info` check so the migration is idempotent — if
@@ -251,8 +277,10 @@ public final class Database {
                                    column: "local_offset_s", decl: "INTEGER")
         }
 
-        // Bump user_version to whatever we successfully reached.
-        let bump = "PRAGMA user_version = \(GARMIN_DUMP_SCHEMA_VERSION)"
+        // Bump user_version to whatever we successfully reached — which is the
+        // highest the viewer implements, NOT the highest it can read. Anything
+        // beyond this is garmin-dump's to apply.
+        let bump = "PRAGMA user_version = \(VIEWER_MIGRATES_TO)"
         if sqlite3_exec(db, bump, nil, nil, nil) != SQLITE_OK {
             throw DatabaseError.step(message: String(cString: sqlite3_errmsg(db)))
         }
@@ -328,8 +356,10 @@ public final class Database {
         }
     }
 
-    /// Reads `PRAGMA user_version` and compares to `GARMIN_DUMP_SCHEMA_VERSION`.
-    /// Throws on mismatch so the UI can show a clear "upgrade one of the tools" error.
+    /// Reads `PRAGMA user_version` and checks it against the supported range
+    /// `GARMIN_DUMP_MIN_SCHEMA_VERSION ... GARMIN_DUMP_SCHEMA_VERSION`.
+    /// Throws outside it so the UI can show a clear "upgrade one of the tools"
+    /// error rather than silently rendering a schema it doesn't understand.
     private func assertSchemaVersion() throws {
         guard let db = db else { return }
         var stmt: OpaquePointer?
@@ -345,10 +375,11 @@ public final class Database {
             throw DatabaseError.step(message: String(cString: sqlite3_errmsg(db)))
         }
         let found = sqlite3_column_int(stmt, 0)
-        if found != GARMIN_DUMP_SCHEMA_VERSION {
+        if found < GARMIN_DUMP_MIN_SCHEMA_VERSION || found > GARMIN_DUMP_SCHEMA_VERSION {
             throw DatabaseError.schemaMismatch(
                 found: found,
-                expected: GARMIN_DUMP_SCHEMA_VERSION
+                oldest: GARMIN_DUMP_MIN_SCHEMA_VERSION,
+                newest: GARMIN_DUMP_SCHEMA_VERSION
             )
         }
     }

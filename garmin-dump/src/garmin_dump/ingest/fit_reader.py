@@ -141,6 +141,38 @@ def field_units(msg: fitdecode.FitDataMessage, name: str) -> str | None:
     return str(units) if units else None
 
 
+def field_def_num(msg: fitdecode.FitDataMessage, name: str) -> int | None:
+    """Return the FIT definition number backing `name` on this message, or None.
+
+    Several profile names can resolve to one physical field: `steps` and
+    `strokes` are subfields of `monitoring.cycles` (f3), and `FieldData.is_named`
+    matches the parent field as well as the subfield, so `get_value("cycles")`
+    and `get_value("steps")` return the *same* field on a walking row. Callers
+    iterating a list of candidate names use this to emit each field once.
+    """
+    try:
+        fld = msg.get_field(name)
+    except KeyError:
+        return None
+    num = getattr(fld, "def_num", None)
+    return int(num) if num is not None else None
+
+
+def resolved_field_name(msg: fitdecode.FitDataMessage, name: str) -> str | None:
+    """Return the name fitdecode actually resolved `name` to on this message.
+
+    On a walking `monitoring` row, `resolved_field_name(msg, "cycles")` is
+    `"steps"` — the active subfield — which is the name the value should be
+    recorded under.
+    """
+    try:
+        fld = msg.get_field(name)
+    except KeyError:
+        return None
+    resolved = getattr(fld, "name", None)
+    return str(resolved) if resolved else None
+
+
 def message_to_dict(msg: fitdecode.FitDataMessage) -> dict[str, Any]:
     """Snapshot a message's fields into a plain dict (for raw_*_json columns).
 
